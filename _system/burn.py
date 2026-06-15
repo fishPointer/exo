@@ -2,8 +2,8 @@
 """
 burn.py — factory-reset the stream vault back to its empty seed scaffold.
 
-Wipes ALL content — every card under `notes/records/` and every thread view
-under `notes/threads/` — and resets the local `.stream/` drift state and the
+Wipes ALL content — every card under `_system/records/` and every thread view
+under `notes/` — and resets the local `.stream/` drift state and the
 dashboard. It touches NOTHING else: the apparatus (`_system/`, `.claude/`,
 `.obsidian/`) and every per-machine config are left exactly as they are. This is
 the de-expression of the vault back to a fresh clone's content-state.
@@ -15,8 +15,8 @@ local backup taken first. The spine (`stream.py`) stays append-only and pure;
 this is a separate tool, the way `/initialize` is `doctor.py`, not a stream verb.
 
 THE SAFETY NET IS A LOCAL BACKUP, NOT GIT. exo's content lives in Obsidian Sync,
-not git (`.gitignore` keeps `notes/records/*` + `notes/threads/*` out; only the
-seed `main.md` is tracked) — so there is nothing in git to recover. Before
+not git (`.gitignore` keeps `_system/records/*` + `notes/*` out; only the seed
+`notes/main.md` is tracked) — so there is nothing in git to recover. Before
 wiping, burn copies records + threads into `.stream/burns/<ts>/` (gitignored,
 never synced, untouched by future burns). Restore is a plain `cp` back.
 
@@ -40,9 +40,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import stream  # noqa: E402
 
 ROOT = stream.ROOT
-RECORDS_ROOT = stream.RECORDS_ROOT          # notes/records/<thread>/
-THREAD_DIR = stream.THREAD_DIR              # notes/threads/<thread>.md
-DEFAULT_VIEW = stream.DEFAULT_VIEW          # notes/threads/main.md  (the tracked seed)
+RECORDS_ROOT = stream.RECORDS_ROOT          # _system/records/<thread>/  (the cards)
+THREAD_DIR = stream.THREAD_DIR              # notes/  (the thread views, flat)
+DEFAULT_VIEW = stream.DEFAULT_VIEW          # notes/main.md  (the tracked seed thread)
 STREAM_DIR = stream.STREAM_DIR              # .stream/  (local, gitignored, unsynced)
 CHANGESETS_DIR = stream.CHANGESETS_DIR
 DIRTY_INDEX = stream.DIRTY_INDEX
@@ -115,10 +115,9 @@ def _reset_to_seed() -> None:
     rebuilt from the now-empty record set via the spine's own renderer)."""
     main_fm = stream._clean_fm_block(DEFAULT_VIEW)          # capture before wiping
     _wipe_contents(RECORDS_ROOT)                            # all cards gone
-    for v in _thread_views():                              # all views but main + .gitkeep
+    for v in _thread_views():                              # delete every view but the seed main.md
         if v.name != SEED_VIEW_NAME:
             v.unlink()
-    (THREAD_DIR / GITKEEP).touch()
     DEFAULT_VIEW.write_text(stream.render_view({}, main_fm), encoding="utf-8")
 
     # local drift state that indexed the (now-deleted) threads
@@ -178,7 +177,7 @@ def main() -> int:
 
     _reset_to_seed()
     print(f"wiped all cards → {_rel(RECORDS_ROOT)}/.gitkeep")
-    print(f"reset threads  → {_rel(THREAD_DIR)} (.gitkeep + empty {SEED_VIEW_NAME})")
+    print(f"reset threads  → {_rel(THREAD_DIR)}/ (empty {SEED_VIEW_NAME})")
     print("cleared .stream drift state; regenerated DASHBOARD.md")
     print("\nvault reset to the empty seed scaffold.")
     if backup:

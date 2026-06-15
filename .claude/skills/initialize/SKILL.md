@@ -49,7 +49,7 @@ It deliberately **won't** auto-"fix":
 - **`✗ golden tests`** — a code regression (someone changed `normalize()`). Real bug; read the
   test output. Don't paper over it.
 - **`✗ validate`** — a record's body no longer hashes to its name: data corruption. The doctor
-  can't know the correct body. Inspect `notes/records/<thread>/` and fix or remove the file.
+  can't know the correct body. Inspect `_system/records/<thread>/` and fix or remove the file.
 - **`✗ <source file> missing`** — a broken clone. `git checkout -- <path>`.
 - **malformed JSON** in a config — it refuses to clobber your file; fix the JSON (or delete it
   and re-run, then it writes the canonical version).

@@ -15,8 +15,8 @@ threads that a team appends to from multiple devices, asynchronously, with no se
 Everything below falls out of that.
 
 ```
-notes/records/<thread>/<id>.md   ← SOURCE OF TRUTH. immutable. id = hash(body).
-notes/threads/<thread>.md        ← VIEW. a rendering of the pile. derived. disposable.
+_system/records/<thread>/<id>.md   ← SOURCE OF TRUTH. immutable. id = hash(body).
+notes/<thread>.md                  ← VIEW. a rendering of the pile. derived. disposable.
 ```
 
 You read and type in the **view**. The tooling reconciles the view back into **records**.
@@ -97,7 +97,7 @@ load-bearing.**
 
 ## 4. Records are partitioned by thread
 
-`notes/records/<thread>/<id>.md` — one directory per thread. A card physically cannot leak
+`_system/records/<thread>/<id>.md` — one directory per thread. A card physically cannot leak
 into another thread's view, and the **same short body in two threads is two files** (same id,
 different directories), not a hash collision that silently drops one. ("ok" in two threads is
 common; this is not a corner case.) Replies (`reply_to`) resolve *within* a thread.

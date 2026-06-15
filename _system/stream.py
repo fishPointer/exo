@@ -6,9 +6,9 @@ Stdlib only. No external dependencies, no install step, no daemon required to
 use the CLI. Self-locating: works from wherever the vault is cloned.
 
 TWO REPRESENTATIONS (DDIA derived data, ch. 11-12)
-  notes/records/<thread>/<id>.md   SOURCE OF TRUTH — one immutable,
+  _system/records/<thread>/<id>.md   SOURCE OF TRUTH — one immutable,
                     content-addressed card, partitioned by thread.
-  notes/threads/*.md   the VIEW — a materialized projection that renders a
+  notes/<thread>.md   the VIEW — a materialized projection that renders a
                     thread's records as Futaba-style callout posts. Regenerable;
                     never authoritative. Authoring happens *in* the view, so the
                     "run button" reconciles the view back to the records.
@@ -54,10 +54,10 @@ from datetime import datetime, timedelta
 # so the whole thing works from wherever it is cloned (Linus rule: no absolute
 # paths baked into the binary).
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-NOTES_DIR = ROOT / "notes"
-RECORDS_ROOT = NOTES_DIR / "records"        # one SUBDIR per thread (partition key)
-THREAD_DIR = NOTES_DIR / "threads"
-DEFAULT_VIEW = THREAD_DIR / "main.md"       # used when --view is omitted
+NOTES_DIR = ROOT / "notes"                  # the thread VIEWS live here, flat (no subfolders)
+RECORDS_ROOT = ROOT / "_system" / "records" # the CARDS (source of truth), one SUBDIR per thread
+THREAD_DIR = NOTES_DIR                       # views are notes/<thread>.md, directly under notes/
+DEFAULT_VIEW = NOTES_DIR / "main.md"         # used when --view is omitted
 STREAM_DIR = ROOT / ".stream"               # local daemon/runtime state (never synced)
 CHANGESETS_DIR = STREAM_DIR / "changesets"
 DIRTY_INDEX = STREAM_DIR / "dirty.json"
@@ -68,7 +68,7 @@ DASHBOARD = ROOT / "DASHBOARD.md"           # the derived status view (root)
 
 def records_dir(view_stem: str) -> pathlib.Path:
     """A thread's record store. Records are PARTITIONED by thread on the
-    filesystem — `notes/records/<thread>/<id>.md` — so a card can never leak
+    filesystem — `_system/records/<thread>/<id>.md` — so a card can never leak
     into another thread's view, and the same body in two threads is two files
     (same id, different dirs), not a content-hash collision that drops one."""
     return RECORDS_ROOT / view_stem

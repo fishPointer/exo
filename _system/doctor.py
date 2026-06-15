@@ -233,7 +233,7 @@ def main() -> int:
         "code regression — do NOT edit normalize(); see test output")
     vp = _run(["validate"])
     req("validate (hash + referential integrity)", vp.returncode == 0,
-        "a record body was changed and no longer hashes to its name — inspect notes/records/<thread>/")
+        "a record body was changed and no longer hashes to its name — inspect _system/records/<thread>/")
     cp = subprocess.run([PY, str(STREAM), "id"], input="doctor", capture_output=True, text=True, cwd=str(ROOT))
     req("CLI entrypoint (`id` == library card_id)",
         cp.returncode == 0 and cp.stdout.strip() == stream.card_id("doctor"))

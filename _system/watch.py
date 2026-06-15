@@ -38,7 +38,7 @@ SUMMON_INFLIGHT = STREAM_DIR / "summon-inflight.json"
 VAULT = ROOT                                         # self-contained: summon runs in THIS vault
 # API key store. Override with EXO_ENV; defaults to ~/.config/exo/.env (chmod 600).
 ENV_FILE = pathlib.Path(os.environ.get("EXO_ENV", pathlib.Path.home() / ".config" / "exo" / ".env"))
-DEFAULT_VIEW_REL = "notes/threads/main.md"
+DEFAULT_VIEW_REL = "notes/main.md"
 POLL_SECONDS = 0.5
 
 

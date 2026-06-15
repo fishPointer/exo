@@ -6,12 +6,12 @@ description: Drive the stream-cards thread store — post to a thread, reconcile
 # /stream
 
 Thin wrapper over `python3 _system/stream.py`. Records are the truth; threads are views.
-Full model: `_system/ARCHITECTURE.md`. Default thread: `notes/threads/main.md`.
+Full model: `_system/ARCHITECTURE.md`. Default thread: `notes/main.md`.
 
 ## Post a card (the only sanctioned way to write)
 
 ```
-echo "the body" | python3 _system/stream.py record --author claude --reply-head --view notes/threads/main.md
+echo "the body" | python3 _system/stream.py record --author claude --reply-head --view notes/main.md
 ```
 
 - `--author` — who's speaking (`fish`, `claude`, `claude-api`, …).
@@ -21,7 +21,7 @@ echo "the body" | python3 _system/stream.py record --author claude --reply-head 
 ## Reconcile a thread after typing into it (the Run button)
 
 ```
-python3 _system/stream.py run --view notes/threads/main.md
+python3 _system/stream.py run --view notes/main.md
 ```
 
 Folds text you typed between cards into new cards, restores any card bodies you edited
@@ -32,15 +32,15 @@ Folds text you typed between cards into new cards, restores any card bodies you 
 ```
 python3 _system/stream.py validate                          # hash + link integrity, all threads
 python3 _system/stream.py scan                              # flag drifted threads → .stream/dirty.json
-python3 _system/stream.py render --view notes/threads/main.md --write   # rebuild view from records
+python3 _system/stream.py render --view notes/main.md --write   # rebuild view from records
 python3 _system/stream.py dashboard --write                # refresh DASHBOARD.md
 ```
 
 ## New thread
 
-A thread is any note with `type: stream` frontmatter under `notes/threads/`. Create the file,
-then `record`/`run` against it with `--view notes/threads/<name>.md`. Its records live in
-`notes/records/<name>/`.
+A thread is any note with `type: stream` frontmatter directly in `notes/` (flat — no
+subfolders). Create the file, then `record`/`run` against it with `--view notes/<name>.md`.
+Its records live under `_system/records/<name>/`.
 
 ## This file is also the skill template
 

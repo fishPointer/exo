@@ -5,9 +5,9 @@ description: Factory-reset the vault — wipe ALL cards and threads back to the 
 
 # /burn
 
-Wipes the whole content store — every card under `notes/records/` and every
-thread view under `notes/threads/` — back to a fresh clone's seed scaffold
-(empty records; `threads/` = `.gitkeep` + an empty `main.md`). Resets the local
+Wipes the whole content store — every card under `_system/records/` and every
+thread view in `notes/` — back to a fresh clone's seed scaffold (empty records;
+`notes/` = just the empty seed `main.md`). Resets the local
 `.stream/` drift state and regenerates `DASHBOARD.md`. Touches nothing else: the
 apparatus (`_system/`, `.claude/`, `.obsidian/`) and per-machine config are left
 exactly as they are. Full model: `_system/ARCHITECTURE.md` §6.
@@ -17,8 +17,8 @@ record-level delete verb); `/burn` is the one sanctioned total reset.
 
 ## The safety net is a local backup, not git
 
-exo's content is distributed by Obsidian Sync, not git — `notes/records/*` and
-`notes/threads/*` are gitignored, so there is nothing in git to recover. Before
+exo's content is distributed by Obsidian Sync, not git — `_system/records/*` and
+`notes/*` are gitignored, so there is nothing in git to recover. Before
 wiping, burn copies records + threads into `.stream/burns/<ts>/` (gitignored,
 never synced, untouched by later burns). Recovery is a plain `cp` back.
 

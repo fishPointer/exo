@@ -16,8 +16,8 @@ config, all in one repo. Pull it, do the one-time setup, and start posting.
 ## The model in 60 seconds
 
 ```
-notes/records/<thread>/<id>.md   ← the truth. immutable cards. id = hash(body).
-notes/threads/<thread>.md        ← what you read & type in. a rendering of the cards.
+_system/records/<thread>/<id>.md   ← the truth. immutable cards. id = hash(body).
+notes/<thread>.md                  ← what you read & type in. a rendering of the cards.
 ```
 
 You type into a **thread** note. You hit **Run**. Your text becomes immutable **cards**.
@@ -78,7 +78,7 @@ Details and key hygiene: [`_system/config/api-keys.md`](_system/config/api-keys.
 ## Daily use
 
 **From Obsidian (the normal way):**
-1. Open a thread (start with `notes/threads/main.md`).
+1. Open a thread (start with `notes/main.md`).
 2. Type your message **between cards** or below the `---` separator at the bottom.
 3. Click **Run** (▶). Your text becomes a card; the thread re-renders.
 
@@ -95,16 +95,16 @@ Details and key hygiene: [`_system/config/api-keys.md`](_system/config/api-keys.
 **From the command line (works with no daemon, no Obsidian):**
 ```bash
 # post a card
-echo "hello team" | python3 _system/stream.py record --author fish --view notes/threads/main.md
+echo "hello team" | python3 _system/stream.py record --author fish --view notes/main.md
 
 # reconcile / inspect
-python3 _system/stream.py run      --view notes/threads/main.md
+python3 _system/stream.py run      --view notes/main.md
 python3 _system/stream.py validate
-python3 _system/stream.py render   --view notes/threads/main.md --write   # = Restore
+python3 _system/stream.py render   --view notes/main.md --write   # = Restore
 ```
 
-**A new thread:** create `notes/threads/<name>.md` with this frontmatter, then post to it
-with `--view notes/threads/<name>.md`:
+**A new thread:** create `notes/<name>.md` (flat in `notes/`, no subfolders) with this
+frontmatter, then post to it with `--view notes/<name>.md`:
 ```yaml
 ---
 type: stream
@@ -156,11 +156,12 @@ exo/
 │   ├── watch.py           ←   the optional daemon (buttons → backend)
 │   ├── capture_prompt.py  ←   the optional Claude Code capture hook
 │   ├── doctor.py          ←   health check (verifies everything; the /initialize skill)
+│   ├── burn.py            ←   factory-reset the vault to empty (the /burn skill)
 │   ├── test_golden.py     ←   the tests that must never go red
+│   ├── records/           ←   CONTENT: the immutable card store, one subdir per thread
 │   └── config/            ←   how to manage settings, skills, API keys, CSS
 └── notes/                 ← CONTENT (synced via Obsidian, not git)
-    ├── threads/main.md    ←   the seed thread (empty)
-    └── records/           ←   the immutable card store, one subdir per thread
+    └── main.md            ←   the seed thread (empty); more threads are notes/<name>.md
 ```
 
 ---
@@ -174,7 +175,7 @@ exo/
 - **A card shows as a plain gray box.** The `stream-cards` CSS snippet is off, or the author
   has no colour — see [`_system/config/css.md`](_system/config/css.md).
 - **`validate` says INVALID.** A card body was hand-edited. **Restore** the thread (it rebuilds
-  from records), or fix/remove the offending record file under `notes/records/<thread>/`.
+  from records), or fix/remove the offending record file under `_system/records/<thread>/`.
 - **Thread looks wrong after a sync.** Hit **Restore** — it rebuilds the view from the merged
   records.
 - **Summon fails.** No key (`~/.config/exo/.env`) or no `claude` CLI. Everything else still

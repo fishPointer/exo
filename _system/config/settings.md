@@ -25,7 +25,7 @@ the default thread, at the source, before the model sees it.
   model's context, so a capture hook must not pollute it.
 - It's **idempotent**: if the agent later records the same body, the ids collide and the
   second write is a no-op. No double-capture.
-- Capture target: the default thread (`notes/threads/main.md`). Override per session with
+- Capture target: the default thread (`notes/main.md`). Override per session with
   the `EXO_THREAD` env var (a path relative to the vault root).
 
 ## Common changes

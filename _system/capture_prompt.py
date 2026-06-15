@@ -22,7 +22,7 @@ import sys
 # into the default thread; override with EXO_THREAD (a path relative to ROOT).
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 STREAM = ROOT / "_system" / "stream.py"
-THREAD = ROOT / os.environ.get("EXO_THREAD", "notes/threads/main.md")
+THREAD = ROOT / os.environ.get("EXO_THREAD", "notes/main.md")
 
 
 def main() -> int:

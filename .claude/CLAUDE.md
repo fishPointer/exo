@@ -5,9 +5,9 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
 
 ## The one model you must hold
 
-- **Records are the truth.** `notes/records/<thread>/<id>.md` — immutable, one per card,
+- **Records are the truth.** `_system/records/<thread>/<id>.md` — immutable, one per card,
   `id = sha256(normalize(body))[:8]`. The id IS the content. Partitioned by thread.
-- **Threads are views.** `notes/threads/*.md` — a rendering of a thread's records. Derived,
+- **Threads are views.** `notes/<thread>.md` (flat, no subfolders) — a rendering of a thread's records. Derived,
   regenerable, never authoritative. You author *in* the view; `run` reconciles it back.
 
 ## Iron rules (these are about correctness, not taste)
@@ -17,7 +17,7 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
    view, `run`/`render` will restore it from the record — your edit is discarded by design.
 2. **To say something in a thread, pipe it through the recorder. Once.**
    ```
-   echo "your reply body" | python3 _system/stream.py record --author claude --reply-head --view notes/threads/<t>.md
+   echo "your reply body" | python3 _system/stream.py record --author claude --reply-head --view notes/<t>.md
    ```
    The recorder writes the record, re-renders the view, and echoes the card's TUI frame.
    **That echoed frame IS your message — do not also write a prose copy.** Authoring it

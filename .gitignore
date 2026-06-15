@@ -3,12 +3,12 @@
 # So the repo stays empty of threads/records — they live in Obsidian Sync.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# content — synced via Obsidian, never committed (keep the dirs + the seed thread)
-notes/records/*
-!notes/records/.gitkeep
-notes/threads/*
-!notes/threads/.gitkeep
-!notes/threads/main.md
+# content — synced via Obsidian, never committed (keep the seed thread + record store).
+# Thread VIEWS live flat in notes/; the immutable CARDS live under _system/records/.
+notes/*
+!notes/main.md
+_system/records/*
+!_system/records/.gitkeep
 
 # local daemon + runtime state (per-machine; must NOT sync either)
 .stream/
