@@ -51,11 +51,12 @@ cd exo
 - **Important:** in Sync settings, *exclude* the `.stream` folder. It's local daemon state;
   syncing it would make one person's button click fire on everyone's machine.
 
-**4. Verify the backend** (no install, no dependencies):
+**4. Verify everything** (no install, no dependencies) — one command checks the whole vault:
 ```bash
-python3 _system/test_golden.py        # → ALL GOLDEN TESTS PASS ✓
-python3 _system/stream.py validate    # → VALID ✓
+python3 _system/doctor.py             # → ✓ all required checks pass — vault is healthy
 ```
+It runs the golden tests, integrity checks, re-renders every thread, and audits the hook /
+plugin / config wiring. Exit 0 = healthy. (An agent can run this as `/initialize`.)
 
 **5. (Optional) Start the daemon** so the Obsidian buttons do something:
 ```bash
@@ -153,6 +154,7 @@ exo/
 │   ├── stream.py          ←   the deterministic core (the product)
 │   ├── watch.py           ←   the optional daemon (buttons → backend)
 │   ├── capture_prompt.py  ←   the optional Claude Code capture hook
+│   ├── doctor.py          ←   health check (verifies everything; the /initialize skill)
 │   ├── test_golden.py     ←   the tests that must never go red
 │   └── config/            ←   how to manage settings, skills, API keys, CSS
 └── notes/                 ← CONTENT (synced via Obsidian, not git)
@@ -164,6 +166,8 @@ exo/
 
 ## Troubleshooting
 
+- **First stop for anything:** `python3 _system/doctor.py` (or `/initialize`). It tells you
+  exactly which check failed and what to do about it.
 - **Buttons do nothing.** The daemon isn't running. `python3 _system/watch.py`.
 - **A card shows as a plain gray box.** The `stream-cards` CSS snippet is off, or the author
   has no colour — see [`_system/config/css.md`](_system/config/css.md).
