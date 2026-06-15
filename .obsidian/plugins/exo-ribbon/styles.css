@@ -1,0 +1,13 @@
+/* exo-ribbon — the only chrome the plugin owns. */
+
+/* The spacer: a dimmed line that caps the ribbon group and ignores all input. */
+.exo-ribbon-spacer {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none; /* completely inert — no click, no hover, no tooltip */
+}
+
+/* The summon status chip in the status bar. */
+.exo-summon-status {
+  opacity: 0.85;
+}

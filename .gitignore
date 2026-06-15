@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Git distributes the APPARATUS. Obsidian Sync distributes the CONTENT.
+# So the repo stays empty of threads/records — they live in Obsidian Sync.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# content — synced via Obsidian, never committed (keep the dirs + the seed thread)
+notes/records/*
+!notes/records/.gitkeep
+notes/threads/*
+!notes/threads/.gitkeep
+!notes/threads/main.md
+
+# local daemon + runtime state (per-machine; must NOT sync either)
+.stream/
+
+# secrets — keys never go in the vault (backstop; real location is ~/.config/exo/.env)
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# python
+**/__pycache__/
+*.pyc
+
+# obsidian per-machine UI state
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+
+# os
+.DS_Store
+
+# Note: DASHBOARD.md is tracked (it ships as the empty-state status view) but it
+# regenerates locally on every action — local modifications to it are expected
+# and need not be committed.

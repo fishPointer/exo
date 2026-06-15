@@ -1,0 +1,55 @@
+/* stream-cards.css — author styling for thread cards.
+ *
+ * Cards render as Obsidian callouts: `> [!<author>] …`. Obsidian draws an
+ * unknown callout type as a plain gray box, so each author we use needs a
+ * colour here. To add an author, copy a block and change the name + hue.
+ * (How-to: _system/config/css.md)
+ *
+ * Enable via Settings → Appearance → CSS snippets, or `enabledCssSnippets`
+ * in .obsidian/appearance.json (already set to ["stream-cards"]).
+ */
+
+/* shared card shape — tight, quiet, readable */
+.callout[data-callout="fish"],
+.callout[data-callout="claude"],
+.callout[data-callout="claude-api"] {
+  margin: 0.5rem 0;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  mix-blend-mode: normal;
+}
+
+.callout[data-callout="fish"] .callout-title,
+.callout[data-callout="claude"] .callout-title,
+.callout[data-callout="claude-api"] .callout-title {
+  font-size: 0.78em;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+/* the card id / anchor reads as a receipt — monospace, dim */
+.callout[data-callout="fish"] .callout-title a,
+.callout[data-callout="claude"] .callout-title a,
+.callout[data-callout="claude-api"] .callout-title a {
+  font-family: var(--font-monospace);
+  font-size: 0.92em;
+  opacity: 0.7;
+}
+
+/* fish — the operator (warm) */
+.callout[data-callout="fish"] {
+  --callout-color: 224, 122, 95;          /* terracotta */
+  background: rgba(224, 122, 95, 0.06);
+}
+
+/* claude — the agent, via the in-vault CLI (cool) */
+.callout[data-callout="claude"] {
+  --callout-color: 90, 140, 220;          /* slate blue */
+  background: rgba(90, 140, 220, 0.06);
+}
+
+/* claude-api — the agent, via a Summon API call (violet, to set it apart) */
+.callout[data-callout="claude-api"] {
+  --callout-color: 150, 110, 220;         /* violet */
+  background: rgba(150, 110, 220, 0.07);
+}
