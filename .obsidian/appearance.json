@@ -1,7 +1,15 @@
 {
-  "accentColor": "",
-  "cssTheme": "",
+  "accentColor": "#6ae2ca",
+  "cssTheme": "Red Graphite",
   "enabledCssSnippets": [
-    "stream-cards"
-  ]
+    "stream-cards",
+    "persona-cards",
+    "heading-colors",
+    "rmgreen",
+    "italic-color",
+    "hr-neon-blue",
+    "math-size"
+  ],
+  "theme": "obsidian",
+  "baseFontSize": 16
 }

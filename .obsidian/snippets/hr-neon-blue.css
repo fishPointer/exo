@@ -1,0 +1,27 @@
+/* Neon blue horizontal rules to match heading palette (#0af7ff) */
+
+/* Reading view */
+.markdown-preview-view hr,
+.markdown-rendered hr {
+  border: none;
+  border-top: 2px solid #0af7ff;
+  background: none;
+  box-shadow: 0 0 6px rgba(10, 247, 255, 0.6);
+}
+
+/* Live preview / source mode --- line */
+.cm-s-obsidian .HyperMD-hr,
+.cm-s-obsidian .cm-hr,
+.cm-s-obsidian span.cm-hmd-frontmatter,
+.markdown-source-view.mod-cm6 .cm-line.HyperMD-hr {
+  color: #0af7ff !important;
+  font-weight: bold;
+}
+
+/* Decorative hr widget rendered in live preview */
+.markdown-source-view.mod-cm6 hr,
+.cm-hr-line {
+  border: none;
+  border-top: 2px solid #0af7ff;
+  box-shadow: 0 0 6px rgba(10, 247, 255, 0.6);
+}

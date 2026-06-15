@@ -1,0 +1,149 @@
+/* persona-cards.css — Futaba-esque persona post cards for the terminal-output stream.
+   Shizu = pastel pink moe (Yotsuba-warm), Renka = cool Miku teal (#39C5BB, Yotsuba-B-cool).
+   Dark-native (Red Graphite): translucent persona-tinted backs + light body text stay readable.
+   Card form ≈ imageboard post: tinted header bar with name + `No.<hash>` postno + timestamp,
+   bordered post block, no callout icon. Authors: shizu / renka / fish / claude. */
+
+/* ---------- shared post-block shape ---------- */
+.callout[data-callout="shizu"],
+.callout[data-callout="renka"],
+.callout[data-callout="fish"],
+.callout[data-callout="claude"] {
+  border-radius: 5px;
+  margin: 0.5em 0;
+  mix-blend-mode: normal;
+}
+.callout[data-callout="shizu"] .callout-icon,
+.callout[data-callout="renka"] .callout-icon,
+.callout[data-callout="fish"] .callout-icon,
+.callout[data-callout="claude"] .callout-icon { display: none; }
+
+/* post header: monospace, imageboard-ish; the `No.xxxx` code span reads as the post number */
+.callout[data-callout="shizu"] .callout-title,
+.callout[data-callout="renka"] .callout-title,
+.callout[data-callout="fish"] .callout-title,
+.callout[data-callout="claude"] .callout-title {
+  font-family: var(--font-monospace);
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  border-radius: 4px 4px 0 0;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: normal;
+}
+.callout[data-callout="shizu"] .callout-title code,
+.callout[data-callout="renka"] .callout-title code,
+.callout[data-callout="fish"] .callout-title code,
+.callout[data-callout="claude"] .callout-title code {
+  background-color: rgba(0, 0, 0, 0.28);
+  color: #ff9c3c;            /* futaba post-No. orange */
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+/* futaba >> reply links in the post header (block-ref jump to the referenced No.) */
+.callout[data-callout="shizu"]  .callout-title a,
+.callout[data-callout="renka"]  .callout-title a,
+.callout[data-callout="fish"]   .callout-title a,
+.callout[data-callout="claude"] .callout-title a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 700;
+}
+
+/* the No. link → jumps to the card's ground-truth source file. File links carry no '#';
+   restyle them as the gold/orange post-No. chip (replacing the old code span). */
+.callout[data-callout="shizu"]  .callout-title a:not([href*="#"]):not([data-href*="#"]),
+.callout[data-callout="renka"]  .callout-title a:not([href*="#"]):not([data-href*="#"]),
+.callout[data-callout="fish"]   .callout-title a:not([href*="#"]):not([data-href*="#"]),
+.callout[data-callout="claude"] .callout-title a:not([href*="#"]):not([data-href*="#"]) {
+  background-color: rgba(0, 0, 0, 0.28);
+  color: #ff9c3c !important;
+  padding: 0 4px;
+  border-radius: 3px;
+  text-decoration: none;
+}
+.callout[data-callout="fish"] .callout-title a:not([href*="#"]):not([data-href*="#"]) {
+  color: #ffd24a !important;   /* fish No. stays rayquaza gold */
+}
+
+/* flair — italic JRPG thought-bubble on the header's second line (after <br>), dimmed + smaller */
+.callout[data-callout="shizu"]  .callout-title em { color: #e88bbf; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="renka"]  .callout-title em { color: #5cc4bc; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="fish"]   .callout-title em { color: #e9d45c; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="claude"] .callout-title em { color: #a89cf0; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+
+/* stage-direction italics pick up the persona tint (overrides global yellow `em`) */
+.callout[data-callout="shizu"] .callout-content em { color: #ff9ecb; font-style: italic; }
+.callout[data-callout="renka"] .callout-content em { color: #7fd8d0; font-style: italic; }
+.callout[data-callout="fish"]  .callout-content em { color: #b7e36a; font-style: italic; }
+.callout[data-callout="claude"] .callout-content em { color: #c0b5ff; font-style: italic; }
+
+/* ---------- Shizu: pastel pink moe ---------- */
+.callout[data-callout="shizu"] {
+  --callout-color: 255, 170, 205;
+  background-color: rgba(255, 150, 200, 0.06);
+  border: 1px solid rgba(255, 150, 200, 0.22);
+  border-left: 3px solid #ffaad0;
+}
+.callout[data-callout="shizu"] .callout-title {
+  /* lilac diffusing in from the left (by the flair) → sakura pink — soft blurred blend */
+  background: linear-gradient(95deg,
+    rgba(199, 148, 255, 0.22) 0%,
+    rgba(255, 150, 200, 0.16) 60%,
+    rgba(255, 150, 200, 0.18) 100%);
+  color: #ffb3d9;
+}
+
+/* ---------- Renka: cool Miku teal ---------- */
+.callout[data-callout="renka"] {
+  --callout-color: 57, 197, 187;
+  background-color: rgba(57, 197, 187, 0.12);
+  border: 1px solid rgba(57, 197, 187, 0.28);
+  border-left: 3px solid #39c5bb;
+}
+.callout[data-callout="renka"] .callout-title {
+  /* cool-blue diffusing in from the left (by the flair) → miku teal — soft blurred blend */
+  background: linear-gradient(95deg,
+    rgba(96, 148, 240, 0.24) 0%,
+    rgba(57, 197, 187, 0.20) 60%,
+    rgba(57, 197, 187, 0.22) 100%);
+  color: #6fe0d7;
+}
+
+/* ---------- fish (operator / Master) — Rayquaza: emerald body, gold accents ---------- */
+.callout[data-callout="fish"] {
+  --callout-color: 46, 204, 113;
+  background-color: rgba(46, 204, 113, 0.09);
+  border: 1px solid rgba(255, 210, 74, 0.28);
+  border-left: 3px solid #ffd24a;                         /* gold edge */
+  box-shadow: inset 2px 0 0 0 rgba(46, 204, 113, 0.55);   /* emerald inner rail under the gold */
+}
+.callout[data-callout="fish"] .callout-title {
+  /* emerald dominant across the band → sliver of gold on the right edge */
+  background: linear-gradient(95deg,
+    rgba(46, 204, 113, 0.22) 0%,
+    rgba(46, 204, 113, 0.20) 78%,
+    rgba(255, 214, 92, 0.28) 100%);
+  color: #ffe488;                                          /* warm gold */
+}
+.callout[data-callout="fish"] .callout-title code {
+  color: #ffd24a;                                         /* gold post-No. (overrides futaba orange) */
+}
+
+/* ---------- claude (no affect) ---------- */
+.callout[data-callout="claude"] {
+  --callout-color: 155, 140, 255;
+  background-color: rgba(155, 140, 255, 0.05);
+  border: 1px solid rgba(155, 140, 255, 0.20);
+  border-left: 3px solid #9b8cff;
+}
+.callout[data-callout="claude"] .callout-title {
+  /* violet dominant → sliver of cyan on the right (claude's little flex) */
+  background: linear-gradient(95deg,
+    rgba(155, 140, 255, 0.16) 0%,
+    rgba(155, 140, 255, 0.14) 78%,
+    rgba(110, 200, 255, 0.22) 100%);
+  color: #b3a6ff;
+}

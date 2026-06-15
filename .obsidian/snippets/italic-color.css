@@ -1,0 +1,17 @@
+/* Italics yellow, bold radiantmatter-green (editor + reading view) */
+body {
+  --italic-color: #f9f0a0;
+  --bold-color: #00ff9d;
+}
+
+.markdown-rendered em,
+.markdown-preview-view em,
+.cm-s-obsidian .cm-em {
+  color: #f9f0a0;
+}
+
+.markdown-rendered strong,
+.markdown-preview-view strong,
+.cm-s-obsidian .cm-strong {
+  color: #00ff9d;
+}

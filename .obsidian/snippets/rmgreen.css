@@ -1,0 +1,19 @@
+/* rmgreen.css — radiantmatter-green (#00ff9d) accents: code text + links.
+   (LaTeX stays theme-default/white; persona-card No. chips override back to gold via !important.) */
+
+/* ---- code: inline + fenced, both views ---- */
+.markdown-rendered code,
+.markdown-preview-view code { color: #00ff9d !important; }
+.cm-s-obsidian .cm-inline-code,
+.cm-s-obsidian .HyperMD-codeblock,
+.cm-s-obsidian .cm-hmd-codeblock,
+.cm-s-obsidian .cm-fenced-code { color: #00ff9d !important; }
+
+/* ---- links: internal + external, both views ---- */
+.markdown-rendered a,
+.markdown-preview-view a,
+.markdown-rendered .internal-link,
+.markdown-rendered .external-link { color: #00ff9d !important; }
+.cm-s-obsidian .cm-link,
+.cm-s-obsidian .cm-hmd-internal-link,
+.cm-s-obsidian .cm-url { color: #00ff9d !important; }

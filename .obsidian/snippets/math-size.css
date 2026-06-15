@@ -1,0 +1,18 @@
+/* Math size — scales both inline `$x$` and display `$$x$$` equally.
+
+   Targets the MathJax container *inside* the Obsidian wrapper, with the
+   wrapper as a specificity boost. Setting font-size on the wrapper alone
+   doesn't propagate reliably for block math because MathJax computes its
+   internal em sizing against the document, not the wrapper element.
+   Going one level deeper (wrapper → mjx-container) catches both inline
+   and block paths.
+
+   `[class~="math-block"]` matches both `class="math math-block"` (reading
+   view) and `class="math-block ..."` variants without depending on the
+   exact wrapper element type (span vs div, which differs between inline
+   and block). */
+
+[class~="math-inline"] mjx-container,
+[class~="math-block"] mjx-container {
+  font-size: 1.5em !important;
+}

@@ -1,0 +1,14 @@
+{
+  "editor:set-heading-1": [{ "modifiers": ["Mod"], "key": "Numpad1" }],
+  "editor:set-heading-2": [{ "modifiers": ["Mod"], "key": "Numpad2" }],
+  "editor:set-heading-3": [{ "modifiers": ["Mod"], "key": "Numpad3" }],
+  "editor:set-heading-4": [{ "modifiers": ["Mod"], "key": "Numpad4" }],
+  "editor:set-heading-5": [{ "modifiers": ["Mod"], "key": "Numpad5" }],
+  "editor:set-heading-6": [{ "modifiers": ["Mod"], "key": "Numpad6" }],
+  "editor:set-heading": [{ "modifiers": ["Mod"], "key": "Numpad0" }],
+  "editor:toggle-bullet-list": [{ "modifiers": ["Mod"], "key": "-" }],
+  "app:toggle-left-sidebar": [{ "modifiers": ["Mod", "Shift"], "key": "L" }],
+  "app:toggle-right-sidebar": [{ "modifiers": ["Mod", "Shift"], "key": "R" }],
+  "window:zoom-in": [{ "modifiers": ["Mod", "Shift"], "key": "PageUp" }],
+  "window:zoom-out": [{ "modifiers": ["Mod", "Shift"], "key": "PageDown" }]
+}
