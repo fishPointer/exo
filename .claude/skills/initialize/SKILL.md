@@ -1,47 +1,60 @@
 ---
 name: initialize
-description: Verify the whole vault is wired and working — run the golden tests, integrity checks, re-render every thread, and audit the hook/plugin/snippet/config wiring, then report green/red. Use at first setup, after pulling apparatus changes, when something looks off, or whenever you want a clean baseline.
+description: Verify AND repair the vault — run the golden tests, integrity checks, re-render every thread, and audit the hook/plugin/snippet/config wiring, fixing every safely-fixable fault and reporting the rest. Use at first setup, after pulling apparatus changes, when something looks off, or whenever you want a clean baseline.
 ---
 
 # /initialize
 
-Runs the deterministic health check and reports. No LLM guessing — it executes
-`_system/doctor.py`, which is read-only except for refreshing the derived
-`DASHBOARD.md`.
+Runs the deterministic health-and-repair pass and reports. No LLM guessing — it
+executes `_system/doctor.py --fix`, which verifies everything, repairs what's
+safely fixable, then re-verifies.
 
 ## Run it
 
 ```
-python3 _system/doctor.py
+python3 _system/doctor.py --fix      # verify + repair (this is /initialize)
+python3 _system/doctor.py            # verify only, change nothing (diagnose)
 ```
 
-Exit 0 = healthy. Exit 1 = at least one required check failed (look for `✗`).
+Exit 0 = healthy (possibly after repairs). Exit 1 = something still failing that
+needs a human — look for `✗`.
 
 ## What it verifies
 
-- **environment** — Python ≥ 3.8; reports whether the `claude` CLI and an API key
-  are present (both optional — only Summon needs them).
-- **apparatus wiring** — every tool/doc exists; the capture hook actually points at
-  `capture_prompt.py`; `alwaysUpdateLinks: false` is set (the guard that stops
-  Obsidian from rewriting `[[wikilinks]]` inside cards and breaking hashes); the
-  plugin id is `exo-ribbon`; the card-styling snippet is present and enabled.
-- **the spine** — golden tests pass (enc:v1 / render round-trip / thread isolation);
-  `validate` is clean (every card hashes to its name, reply links resolve); the CLI
-  entrypoint dispatches and agrees with the library; **every thread re-renders
-  byte-identical from its records** (no silent drift; a thread flagged `dirty` with
-  unsaved edits is allowed to differ).
-- **daemon** — reports whether `watch.py` is running.
+- **environment** — Python ≥ 3.8; whether the `claude` CLI and an API key exist (both
+  optional — only Summon needs them).
+- **apparatus** — every tool/doc exists; the capture hook points at `capture_prompt.py`;
+  `alwaysUpdateLinks: false` (the guard that stops Obsidian from rewriting `[[wikilinks]]`
+  inside cards and breaking hashes); plugin id is `exo-ribbon`; the card-styling snippet is
+  present and enabled.
+- **the spine** — golden tests (enc:v1 / round-trip / thread isolation); `validate` (every
+  card hashes to its name, reply links resolve); the CLI dispatches; **every thread
+  re-renders byte-identical from its records** (no drift).
+- **daemon** — whether `watch.py` is running.
 
-## Reading the result
+## What `--fix` repairs (and what it won't)
 
-- `✓` required check passed · `✗` required check failed (fix it) · `·` optional/info.
-- **`✗ threads render clean from records`** → a thread drifted. Hit **Restore**
-  (`python3 _system/stream.py render --view <thread> --write`) to rebuild it from records.
-- **`✗ validate`** → a card body was hand-edited. Restore the thread, or fix/remove the
-  offending file under `notes/records/<thread>/`.
-- **daemon `🔴 down`** → buttons won't work until you run `python3 _system/watch.py`. Not a
-  failure — the CLI works without it. (Do not background a daemon silently for the operator;
-  print the command and let them start it.)
+Repairs only the unambiguous, **lossless** faults, then re-checks:
 
-This skill does not start the daemon or change content — it diagnoses. Acting on a `✗` is a
-separate, deliberate step.
+- flips `alwaysUpdateLinks` back to false (writes `app.json` if missing)
+- re-injects the capture hook into `settings.json` (preserving your other settings)
+- re-enables the `stream-cards` snippet; sets the plugin id back to `exo-ribbon`
+- **reconciles a drifted thread with `run`** — which folds any text you'd typed into cards
+  (preserved, not discarded) and re-renders. Threads flagged `dirty` (known unsaved work) are
+  left alone — it never auto-cards a draft you haven't committed.
+- refreshes the dirty index + `DASHBOARD.md`
+
+It deliberately **won't** auto-"fix":
+
+- **`✗ golden tests`** — a code regression (someone changed `normalize()`). Real bug; read the
+  test output. Don't paper over it.
+- **`✗ validate`** — a record's body no longer hashes to its name: data corruption. The doctor
+  can't know the correct body. Inspect `notes/records/<thread>/` and fix or remove the file.
+- **`✗ <source file> missing`** — a broken clone. `git checkout -- <path>`.
+- **malformed JSON** in a config — it refuses to clobber your file; fix the JSON (or delete it
+  and re-run, then it writes the canonical version).
+- It **never starts the daemon for you** — reports it down and prints the command.
+
+Acting on a `✗` it won't auto-fix is a deliberate, human step. That boundary is the point: it
+repairs what's safe and is honest about the rest, rather than hiding data loss behind a green
+checkmark.

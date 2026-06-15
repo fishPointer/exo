@@ -56,7 +56,8 @@ cd exo
 python3 _system/doctor.py             # → ✓ all required checks pass — vault is healthy
 ```
 It runs the golden tests, integrity checks, re-renders every thread, and audits the hook /
-plugin / config wiring. Exit 0 = healthy. (An agent can run this as `/initialize`.)
+plugin / config wiring. Exit 0 = healthy. Add `--fix` (or run `/initialize`) to also **repair**
+every safely-fixable problem and report the rest.
 
 **5. (Optional) Start the daemon** so the Obsidian buttons do something:
 ```bash
@@ -166,8 +167,9 @@ exo/
 
 ## Troubleshooting
 
-- **First stop for anything:** `python3 _system/doctor.py` (or `/initialize`). It tells you
-  exactly which check failed and what to do about it.
+- **First stop for anything:** `python3 _system/doctor.py --fix` (or `/initialize`). It repairs
+  every safely-fixable fault (config wiring, a flipped safety flag, a drifted thread) and tells
+  you exactly what's left and how to fix it.
 - **Buttons do nothing.** The daemon isn't running. `python3 _system/watch.py`.
 - **A card shows as a plain gray box.** The `stream-cards` CSS snippet is off, or the author
   has no colour — see [`_system/config/css.md`](_system/config/css.md).
