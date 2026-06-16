@@ -49,10 +49,10 @@ tests.**
 ## 3. The four layers (each one optional below the next)
 
 ```
-  ┌─ Layer 3  capture hook   _system/capture_prompt.py   (Claude Code → card)
-  ├─ Layer 2  Obsidian UI    .obsidian/plugins/exo-ribbon (buttons → sentinel file)
-  ├─ Layer 1  daemon         _system/watch.py             (sentinel → runs Layer 0)
-  └─ Layer 0  the spine      _system/stream.py            (pure, deterministic, stdlib)
+  ┌─ Layer 3  prompt capture  _system/capture_prompt.py    (operator prompt → fish card)
+  ├─ Layer 2  Obsidian UI     .obsidian/plugins/exo-ribbon (buttons → sentinel file)
+  ├─ Layer 1  daemon          _system/watch.py             (sentinel → runs Layer 0)
+  └─ Layer 0  the spine       _system/stream.py            (pure, deterministic, stdlib)
 ```
 
 **Layer 0 is the product.** `stream.py` is a stdlib-only, deterministic CLI. No daemon, no
@@ -65,6 +65,13 @@ convenience that can be absent without breaking what's below it:
 
 That layering is the robustness story. The fragile parts (a GUI, a long-running process, a
 network call) are all *optional shells* around a core that is none of those things.
+
+The daemon is installed as an **independent systemd user service** (`_system/daemon.sh install`),
+not a child of the shell that launched it — so closing or crashing Claude Code can't take it down;
+it restarts on failure and (with linger) survives logout/reboot. Hosts without a systemd user
+session fall back to a detached `setsid`+`nohup` process. Either way it acts only on an explicit
+button click (a new nonce in `.stream/trigger.json`) — no autonomous loop. Setup and verification:
+`config/daemon.md`.
 
 ### The verbs (Layer 0)
 
@@ -92,6 +99,30 @@ thing in the system, the API call, is quarantined in `watch.py` (`Summon`). Its 
 piped *straight back into* `stream.py record`, so even the agent's reply is captured at its
 source, byte-for-byte, exactly like a human's. **No component is both stateful/networked and
 load-bearing.**
+
+### Capture: the prompt by hook, the reply by `record` + re-emit
+
+Both ends reach the thread through the single-source `record`, but by **different paths**, because
+only one of them has a clean source. The prompt's only source is the harness, so a hook grabs it;
+the reply's source is the agent itself, so the agent pipes it straight in — no hook, no scrape.
+
+- **prompts → `fish` cards** — `capture_prompt.py` (UserPromptSubmit, Layer 3) mirrors every
+  operator prompt the instant it's sent — out of the agent's discretion (the fix for "you forgot
+  to publish some of my inputs"). Harness-injected text on the same channel (task-notifications,
+  system reminders, slash-command echoes) is **not the operator**, so it's skipped.
+- **the reply → one `claude-tui` card, minted at source** — the agent pipes its reply body
+  through `record` (capture-*at-source*, like the daemon's `claude -p | record`): one clean body
+  in, a content-addressed card written, and the `render_tui` callout — `┏━ … ┃ … ┗━ enc:v1 <id>` —
+  printed. The agent then **re-emits that exact frame as its terminal message**, so the operator
+  reads the bound callout directly (no `ctrl+o`) and the footer hash is the receipt. No transcript,
+  no scrape, no race; the card body == what's inside the bars, by construction. There is **no Stop
+  hook** — an earlier build had one and it raced (§6); `record` is the whole reply path now, so a
+  reply the agent doesn't `record` simply isn't carded (the dashboard's reply-debt flags it).
+
+This is **mirroring/at-source authoring, not generation** — `record` copies the agent's own piped
+bytes, the prompt hook the operator's; both stay clear of the no-autonomous-loop rule (only `Summon`
+hits the API, on a click). The summon lane records its own reply as `claude-api` (red) and sets
+`STREAM_SUMMON`; content-addressing dedupes any overlap to one card.
 
 ---
 
@@ -143,6 +174,15 @@ make one person's button click fire on everyone's machine.
   file). The store is append-only on purpose.
 - **Summon is single-shot and manual.** There is no autonomous reply loop and adding one
   requires explicit operator sign-off (it's a standing rule, not an oversight).
+- **A reply the agent never `record`s isn't carded.** That's the cost of capture-at-source, and
+  it's the right cost. An earlier build added a Stop hook that scraped the turn-final reply back
+  out of Claude Code's transcript — but a Stop hook fires *as* that file is being flushed, so the
+  read raced the write and once carded a mid-turn line instead of the closing reply. The fix
+  wasn't to mitigate the race (a settle-wait poll); it was to **delete the scrape**. Replies mint
+  through `record` and the agent re-emits the frame (§3) — one producer, one consumer, no
+  transcript in the loop, so there is no race to lose. The discipline (every reply goes through
+  `record`) is enforced by CLAUDE.md and surfaced by the dashboard's reply-debt when a head goes
+  unanswered.
 
 ---
 

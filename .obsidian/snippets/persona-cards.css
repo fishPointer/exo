@@ -147,3 +147,56 @@
     rgba(110, 200, 255, 0.22) 100%);
   color: #b3a6ff;
 }
+
+/* ---------- claude-tui (terminal replies, violet) + claude-api (summoned, soft dark red) ---------- */
+.callout[data-callout="claude-tui"],
+.callout[data-callout="claude-api"] { border-radius: 5px; margin: 0.5em 0; mix-blend-mode: normal; }
+.callout[data-callout="claude-tui"] .callout-icon,
+.callout[data-callout="claude-api"] .callout-icon { display: none; }
+.callout[data-callout="claude-tui"] .callout-title,
+.callout[data-callout="claude-api"] .callout-title {
+  font-family: var(--font-monospace); font-size: 0.82em; letter-spacing: 0.02em;
+  padding: 4px 8px; border-radius: 4px 4px 0 0; font-weight: 700; line-height: 1.6; white-space: normal;
+}
+.callout[data-callout="claude-tui"] .callout-title code,
+.callout[data-callout="claude-api"] .callout-title code {
+  background-color: rgba(0,0,0,0.28); color: #ff9c3c; padding: 0 4px; border-radius: 3px;
+}
+.callout[data-callout="claude-tui"] .callout-title a,
+.callout[data-callout="claude-api"] .callout-title a {
+  text-decoration: underline; text-underline-offset: 2px; font-weight: 700;
+}
+.callout[data-callout="claude-tui"] .callout-title a:not([href*="#"]):not([data-href*="#"]),
+.callout[data-callout="claude-api"] .callout-title a:not([href*="#"]):not([data-href*="#"]) {
+  background-color: rgba(0,0,0,0.28); padding: 0 4px; border-radius: 3px; text-decoration: none;
+}
+
+/* claude-tui — violet (the interactive terminal voice; same family as claude) */
+.callout[data-callout="claude-tui"] {
+  --callout-color: 155, 140, 255;
+  background-color: rgba(155, 140, 255, 0.05);
+  border: 1px solid rgba(155, 140, 255, 0.20);
+  border-left: 3px solid #9b8cff;
+}
+.callout[data-callout="claude-tui"] .callout-title {
+  background: linear-gradient(95deg, rgba(155,140,255,0.16) 0%, rgba(155,140,255,0.14) 78%, rgba(110,200,255,0.22) 100%);
+  color: #b3a6ff;
+}
+.callout[data-callout="claude-tui"] .callout-title em { color: #a89cf0; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="claude-tui"] .callout-content em { color: #c0b5ff; font-style: italic; }
+.callout[data-callout="claude-tui"] .callout-title a:not([href*="#"]):not([data-href*="#"]) { color: #b3a6ff !important; }
+
+/* claude-api — soft dark red (the summoned / API voice) */
+.callout[data-callout="claude-api"] {
+  --callout-color: 200, 90, 90;
+  background-color: rgba(170, 50, 50, 0.10);
+  border: 1px solid rgba(170, 50, 50, 0.30);
+  border-left: 3px solid #b34747;
+}
+.callout[data-callout="claude-api"] .callout-title {
+  background: linear-gradient(95deg, rgba(150,40,40,0.32) 0%, rgba(120,35,35,0.24) 78%, rgba(95,30,30,0.22) 100%);
+  color: #e79a9a;
+}
+.callout[data-callout="claude-api"] .callout-title em { color: #d98a8a; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="claude-api"] .callout-content em { color: #e0a0a0; font-style: italic; }
+.callout[data-callout="claude-api"] .callout-title a:not([href*="#"]):not([data-href*="#"]) { color: #e79a9a !important; }

@@ -16,5 +16,18 @@
   "outline": true,
   "word-count": true,
   "file-recovery": true,
-  "sync": true
+  "sync": true,
+  "canvas": true,
+  "footnotes": false,
+  "note-composer": true,
+  "slash-command": false,
+  "markdown-importer": false,
+  "zk-prefixer": false,
+  "random-note": false,
+  "slides": false,
+  "audio-recorder": false,
+  "workspaces": false,
+  "publish": false,
+  "bases": true,
+  "webviewer": false
 }

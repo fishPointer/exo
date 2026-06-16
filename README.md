@@ -44,7 +44,7 @@ cd exo
 - Enable the bundled plugin: Settings → Community plugins → turn off Restricted/Safe mode →
   enable **Exo Ribbon**. (Five buttons appear in the left ribbon: Run, Scan, Validate,
   Restore, Summon.)
-- The card styling snippet (`stream-cards`) is enabled by default.
+- The card styling snippet (`persona-cards`) is enabled by default.
 
 **3. Turn on sync.** This is how content reaches other devices.
 - Settings → Sync → log in → connect to your team's shared remote vault.
@@ -172,7 +172,7 @@ exo/
   every safely-fixable fault (config wiring, a flipped safety flag, a drifted thread) and tells
   you exactly what's left and how to fix it.
 - **Buttons do nothing.** The daemon isn't running. `python3 _system/watch.py`.
-- **A card shows as a plain gray box.** The `stream-cards` CSS snippet is off, or the author
+- **A card shows as a plain gray box.** The `persona-cards` CSS snippet is off, or the author
   has no colour — see [`_system/config/css.md`](_system/config/css.md).
 - **`validate` says INVALID.** A card body was hand-edited. **Restore** the thread (it rebuilds
   from records), or fix/remove the offending record file under `_system/records/<thread>/`.

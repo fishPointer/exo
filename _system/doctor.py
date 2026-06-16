@@ -140,29 +140,6 @@ def _hook_fix() -> None:
     _save(p, cfg)
 
 
-def _snippet_ok() -> bool:
-    snip = ROOT / ".obsidian" / "snippets" / "stream-cards.css"
-    app = ROOT / ".obsidian" / "appearance.json"
-    if not snip.exists() or not app.exists():
-        return False
-    try:
-        return "stream-cards" in _load(app).get("enabledCssSnippets", [])
-    except ValueError:
-        return False
-
-
-def _snippet_fix() -> None:
-    snip = ROOT / ".obsidian" / "snippets" / "stream-cards.css"
-    if not snip.exists():
-        raise RuntimeError("stream-cards.css missing — restore it (`git checkout -- .obsidian/snippets/stream-cards.css`)")
-    app = ROOT / ".obsidian" / "appearance.json"
-    d = _load(app) if app.exists() else {"accentColor": "", "cssTheme": ""}
-    lst = d.setdefault("enabledCssSnippets", [])
-    if "stream-cards" not in lst:
-        lst.append("stream-cards")
-    _save(app, d)
-
-
 def _manifest_ok() -> bool:
     p = ROOT / ".obsidian" / "plugins" / "exo-ribbon" / "manifest.json"
     if not p.exists():
@@ -180,6 +157,95 @@ def _manifest_fix() -> None:
     d = _load(p)
     d["id"] = "exo-ribbon"
     _save(p, d)
+
+
+# canonical claude-tui / claude-api callout styling. Appended to persona-cards.css
+# if absent so the terminal-voice (violet) and summon (red) cards don't fall back
+# to the default callout background. Self-heal source for a snippet imported
+# without these blocks — same pattern as HOOK_CMD above.
+TUI_CALLOUT_CSS = """
+/* ---------- claude-tui (terminal replies, violet) + claude-api (summoned, soft dark red) ---------- */
+.callout[data-callout="claude-tui"],
+.callout[data-callout="claude-api"] { border-radius: 5px; margin: 0.5em 0; mix-blend-mode: normal; }
+.callout[data-callout="claude-tui"] .callout-icon,
+.callout[data-callout="claude-api"] .callout-icon { display: none; }
+.callout[data-callout="claude-tui"] .callout-title,
+.callout[data-callout="claude-api"] .callout-title {
+  font-family: var(--font-monospace); font-size: 0.82em; letter-spacing: 0.02em;
+  padding: 4px 8px; border-radius: 4px 4px 0 0; font-weight: 700; line-height: 1.6; white-space: normal;
+}
+.callout[data-callout="claude-tui"] .callout-title code,
+.callout[data-callout="claude-api"] .callout-title code {
+  background-color: rgba(0,0,0,0.28); color: #ff9c3c; padding: 0 4px; border-radius: 3px;
+}
+.callout[data-callout="claude-tui"] .callout-title a,
+.callout[data-callout="claude-api"] .callout-title a {
+  text-decoration: underline; text-underline-offset: 2px; font-weight: 700;
+}
+.callout[data-callout="claude-tui"] .callout-title a:not([href*="#"]):not([data-href*="#"]),
+.callout[data-callout="claude-api"] .callout-title a:not([href*="#"]):not([data-href*="#"]) {
+  background-color: rgba(0,0,0,0.28); padding: 0 4px; border-radius: 3px; text-decoration: none;
+}
+
+/* claude-tui — violet (the interactive terminal voice; same family as claude) */
+.callout[data-callout="claude-tui"] {
+  --callout-color: 155, 140, 255;
+  background-color: rgba(155, 140, 255, 0.05);
+  border: 1px solid rgba(155, 140, 255, 0.20);
+  border-left: 3px solid #9b8cff;
+}
+.callout[data-callout="claude-tui"] .callout-title {
+  background: linear-gradient(95deg, rgba(155,140,255,0.16) 0%, rgba(155,140,255,0.14) 78%, rgba(110,200,255,0.22) 100%);
+  color: #b3a6ff;
+}
+.callout[data-callout="claude-tui"] .callout-title em { color: #a89cf0; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="claude-tui"] .callout-content em { color: #c0b5ff; font-style: italic; }
+.callout[data-callout="claude-tui"] .callout-title a:not([href*="#"]):not([data-href*="#"]) { color: #b3a6ff !important; }
+
+/* claude-api — soft dark red (the summoned / API voice) */
+.callout[data-callout="claude-api"] {
+  --callout-color: 200, 90, 90;
+  background-color: rgba(170, 50, 50, 0.10);
+  border: 1px solid rgba(170, 50, 50, 0.30);
+  border-left: 3px solid #b34747;
+}
+.callout[data-callout="claude-api"] .callout-title {
+  background: linear-gradient(95deg, rgba(150,40,40,0.32) 0%, rgba(120,35,35,0.24) 78%, rgba(95,30,30,0.22) 100%);
+  color: #e79a9a;
+}
+.callout[data-callout="claude-api"] .callout-title em { color: #d98a8a; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
+.callout[data-callout="claude-api"] .callout-content em { color: #e0a0a0; font-style: italic; }
+.callout[data-callout="claude-api"] .callout-title a:not([href*="#"]):not([data-href*="#"]) { color: #e79a9a !important; }
+"""
+
+
+def _tui_css_ok() -> bool:
+    """persona-cards.css is enabled AND defines the claude-tui callout (so the
+    terminal-voice + summon cards render styled, not on the default background)."""
+    snip = ROOT / ".obsidian" / "snippets" / "persona-cards.css"
+    app = ROOT / ".obsidian" / "appearance.json"
+    if not snip.exists() or not app.exists():
+        return False
+    try:
+        enabled = "persona-cards" in _load(app).get("enabledCssSnippets", [])
+    except ValueError:
+        return False
+    return enabled and 'data-callout="claude-tui"' in snip.read_text(encoding="utf-8", errors="ignore")
+
+
+def _tui_css_fix() -> None:
+    snip = ROOT / ".obsidian" / "snippets" / "persona-cards.css"
+    if not snip.exists():
+        raise RuntimeError("persona-cards.css missing — `git checkout -- .obsidian/snippets/persona-cards.css`")
+    txt = snip.read_text(encoding="utf-8", errors="ignore")
+    if 'data-callout="claude-tui"' not in txt:
+        snip.write_text(txt.rstrip("\n") + "\n" + TUI_CALLOUT_CSS, encoding="utf-8")
+    app = ROOT / ".obsidian" / "appearance.json"
+    d = _load(app) if app.exists() else {"accentColor": "", "cssTheme": ""}
+    lst = d.setdefault("enabledCssSnippets", [])
+    if "persona-cards" not in lst:
+        lst.append("persona-cards")
+    _save(app, d)
 
 
 def _run(argv: list[str]):
@@ -216,15 +282,17 @@ def main() -> int:
 
     section("apparatus — source (can't auto-fix; restore from git)")
     for rel in ("_system/stream.py", "_system/watch.py", "_system/capture_prompt.py",
-                "_system/test_golden.py", "_system/ARCHITECTURE.md", "README.md",
+                "_system/test_golden.py",
+                "_system/ARCHITECTURE.md", "README.md",
                 ".claude/CLAUDE.md", ".obsidian/plugins/exo-ribbon/main.js",
-                ".obsidian/snippets/stream-cards.css", ".gitignore"):
+                ".obsidian/snippets/persona-cards.css",
+                ".gitignore"):
         req(rel, (ROOT / rel).exists(), f"missing — `git checkout -- {rel}`")
 
     section("apparatus — wiring (auto-fixable)")
     fixable("alwaysUpdateLinks: false (hash-safety guard)", _guard_ok, _guard_fix)
-    fixable("capture hook → capture_prompt.py", _hook_ok, _hook_fix)
-    fixable("card styling snippet enabled", _snippet_ok, _snippet_fix)
+    fixable("prompt hook → capture_prompt.py (fish capture)", _hook_ok, _hook_fix)
+    fixable("card styling snippet (persona-cards) enabled + claude-tui/api callouts", _tui_css_ok, _tui_css_fix)
     fixable("plugin id = exo-ribbon", _manifest_ok, _manifest_fix)
 
     section("the spine — does it actually work")
@@ -257,7 +325,7 @@ def main() -> int:
     pid = daemon.get("pid")
     alive = bool(pid) and pathlib.Path(f"/proc/{pid}").exists()
     info("watch.py", f"🟢 live (pid {pid})" if alive
-         else "🔴 down — `python3 _system/watch.py` to enable buttons (not started for you)")
+         else "🔴 down — `_system/daemon.sh install` to run it as an independent service (not started for you)")
 
     # fresh baseline: refresh dirty index + the derived dashboard
     if FIX:

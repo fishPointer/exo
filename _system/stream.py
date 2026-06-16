@@ -263,23 +263,73 @@ def _sort_key(card: Card) -> str:
     return re.sub(r"\s*\([a-z]{3}\)", "", card.captured_at)
 
 
+# ── view-only HTML-escape ─────────────────────────────────────────────────────
+# A card body is raw markdown, hashed verbatim into its id. But when projected
+# into the Obsidian *callout*, a bare angle-bracket token (e.g. <task-notification>)
+# is parsed by Obsidian as an inline HTML tag — and an unclosed one swallows the
+# rest of the callout and collapses the box. So render_card escapes &,<,> in the
+# body, but only OUTSIDE code spans/fences (so `<id>` in backticks still renders
+# verbatim), and parse_view applies the exact inverse — keeping render->parse a
+# loss-free round-trip (the body still hashes to its id). Records stay untouched.
+_VIEW_ESCAPES = (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"))
+
+
+def _xform_outside_code(text: str, pairs: tuple) -> str:
+    """Apply `pairs` replacements to every region NOT inside a fenced code block
+    or an inline code span. Backticks are never touched, so the code regions are
+    identical before and after — which makes _view_escape / _view_unescape exact
+    inverses of each other."""
+    out, in_fence = [], False
+    for line in text.split("\n"):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            out.append(line)                         # fence marker: verbatim
+            continue
+        if in_fence:
+            out.append(line)                         # inside fence: verbatim
+            continue
+        segs = re.split(r"(`+[^`]*`+)", line)         # odd indices = code spans
+        for k in range(0, len(segs), 2):              # even = outside any span
+            s = segs[k]
+            for a, b in pairs:
+                s = s.replace(a, b)
+            segs[k] = s
+        out.append("".join(segs))
+    return "\n".join(out)
+
+
+def _view_escape(body: str) -> str:
+    """Record body -> callout-safe text (escape &,<,> outside code)."""
+    return _xform_outside_code(body, _VIEW_ESCAPES)
+
+
+def _view_unescape(body: str) -> str:
+    """Callout-safe text -> record body (the exact inverse of _view_escape)."""
+    return _xform_outside_code(body, tuple((b, a) for a, b in reversed(_VIEW_ESCAPES)))
+
+
 def render_card(card: Card) -> str:
-    """One card -> its callout post block + ^anchor (view grammar §3)."""
+    """One card -> its callout post block + ^anchor (view grammar §3).
+
+    The body is HTML-escaped for the callout (outside code spans) so a bare
+    angle-bracket token can't open an HTML tag and collapse the box; `parse_view`
+    reverses it, so the rendered body still hashes to its id."""
     head = f"> [!{card.author}] {card.author} - {card.captured_at} | [[{card.id}]]"
     if card.reply_to:
         head += f" >> [[#^{card.reply_to}|{card.reply_to}]]"
     head += f" <br> {card.flair}"
-    body = normalize(card.body).rstrip("\n")
+    body = _view_escape(normalize(card.body).rstrip("\n"))
     body_lines = [(f"> {ln}" if ln else ">") for ln in body.split("\n")]
     return "\n".join([head, *body_lines, "", f"^{card.id}"])
 
 
 def render_tui(card: Card) -> str:
     """The TERMINAL chrome for a card — the third surface alongside the Obsidian
-    callout and the raw record. The left rail `┃` is the TUI's `> `: strip the
-    chrome on either surface and the BODY is byte-identical. The footer carries
-    the enc:v1 id as the receipt. This is the frame an agent's reply is presented
-    in, so what's said == what's stored, by construction."""
+    callout and the raw record. The left rail `┃` is the TUI's `> `: strip it here
+    and the body is the record verbatim (the Obsidian callout additionally HTML-
+    escapes the body for safe rendering — a reversible projection; see render_card).
+    The footer carries the enc:v1 id as the receipt. This is the frame an agent's
+    reply is presented in, so what's said == what's stored, by construction."""
     rail = "┃"
     head = f"┏━ [{card.author}] · {card.id}" + (f" ↳ {card.reply_to}" if card.reply_to else "")
     out = [head]
@@ -367,7 +417,8 @@ def parse_view(text: str) -> tuple[str, list[ParsedCard], list[str]]:
                 printed_id=hm.group("id"), author=hm.group("author"),
                 captured_at=hm.group("ts"), reply_to=hm.group("parent"),
                 flair=hm.group("flair"),
-                body="\n".join(body_lines).strip("\n"), anchor=anchor))
+                body=_view_unescape("\n".join(body_lines).strip("\n")),
+                anchor=anchor))
         elif line.strip() in ("", "---"):
             i += 1
         else:

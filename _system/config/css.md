@@ -7,20 +7,20 @@ author you use needs a colour. That's what the CSS snippet does.
 ## The snippet
 
 ```
-.obsidian/snippets/stream-cards.css
+.obsidian/snippets/persona-cards.css
 ```
 
 It's enabled in `.obsidian/appearance.json`:
 
 ```json
-{ "enabledCssSnippets": ["stream-cards"] }
+{ "enabledCssSnippets": ["persona-cards"] }
 ```
 
 (Or toggle it in Settings → Appearance → CSS snippets.)
 
 ## Add an author colour
 
-Copy a block in `stream-cards.css`, change the name and the hue:
+Copy a block in `persona-cards.css`, change the name and the hue:
 
 ```css
 .callout[data-callout="renka"] {

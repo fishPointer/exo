@@ -39,6 +39,9 @@ python3 _system/burn.py --yes --no-backup   # wipe with NO backup (recovery is y
 3. On confirmation, run `python3 _system/burn.py --yes`.
 4. **Stream the tool's output verbatim** — especially the backup path and the `cp …` recovery
    line. That path is the user's only recovery handle; do not omit or paraphrase it.
+5. **Burn means burn — the turn must leave the thread *empty*.** There's no Stop hook to re-seed
+   it: the reply primitive is opt-in (`record`), so just report the result in prose and do **not**
+   `record`/summon into the wiped thread — that would re-seed what you just cleared.
 
 After a burn the dashboard shows the empty state and `main.md` is an empty thread —
 the same state a fresh clone ships in. `python3 _system/stream.py validate` should

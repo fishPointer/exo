@@ -31,6 +31,8 @@ def main() -> int:
         "multi\nline\n\nbody with a blank line",
         "trailing spaces   \nand a tab\tinside",
         "ok",                      # the short, repeatable body that used to collide
+        "bare <task-notification> & `<id>` in a code span",  # view-escape round-trip
+        "```\n<html> in a fence\n```\nand <bare> after",      # fence + bare token
     ]
 
     # 1. enc:v1: normalize is a fixed point, and the id is reproducible.

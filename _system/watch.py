@@ -15,7 +15,11 @@ This daemon only ever acts on an EXPLICIT button click (a new nonce in the
 trigger file). It runs no autonomous loop and generates no content on its own —
 Summon (an API call) fires solely on your click. Safe to leave running.
 
-Run:  python3 _system/watch.py      # leave it running while you work in Obsidian
+Run it as an INDEPENDENT service (survives closing Claude Code / crashes):
+      _system/daemon.sh install       # systemd user service, or detached fallback
+Manage:  _system/daemon.sh {status|restart|stop|logs}
+Direct (foreground, dies with the shell — debugging only):  python3 _system/watch.py
+See _system/config/daemon.md.
 """
 from __future__ import annotations
 
@@ -40,6 +44,10 @@ VAULT = ROOT                                         # self-contained: summon ru
 ENV_FILE = pathlib.Path(os.environ.get("EXO_ENV", pathlib.Path.home() / ".config" / "exo" / ".env"))
 DEFAULT_VIEW_REL = "notes/main.md"
 POLL_SECONDS = 0.5
+# The agent's terminal replies are carded by the agent itself via `stream.py record`
+# (capture-at-source; see ARCHITECTURE §3), NOT here. Operator prompts are carded by the
+# UserPromptSubmit hook (capture_prompt.py). Neither depends on this daemon being up —
+# the watcher owns only the button/Summon path below.
 
 
 def _update_daemon(**kw) -> None:

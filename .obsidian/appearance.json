@@ -2,7 +2,6 @@
   "accentColor": "#6ae2ca",
   "cssTheme": "Red Graphite",
   "enabledCssSnippets": [
-    "stream-cards",
     "persona-cards",
     "heading-colors",
     "rmgreen",

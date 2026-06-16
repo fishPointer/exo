@@ -5,6 +5,7 @@ agent. Each one is the authoritative how-to for one thing you might want to chan
 
 | file | when you reach for it |
 |---|---|
+| [`daemon.md`](daemon.md) | run the watcher as an independent service (systemd user unit), not a shell background job |
 | [`settings.md`](settings.md) | change Claude Code behaviour — the capture hook, permissions |
 | [`skills.md`](skills.md) | add or edit a `/skill` (a reusable command for humans + agents) |
 | [`api-keys.md`](api-keys.md) | set the API key the `Summon` button uses; key hygiene |
