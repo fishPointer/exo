@@ -1,6 +1,6 @@
 ---
 name: stream
-description: Drive the stream-cards thread store — post to a thread, reconcile edits (run), check integrity (validate), or rebuild a view from records (restore). Use whenever the user wants to append to, repair, or inspect a thread.
+description: Drive the stream-cards thread store — post to a thread, reconcile edits (run), harvest in-body annotations (annotate), check integrity (validate), or rebuild a view from records (restore). Use whenever the user wants to append to, repair, or inspect a thread.
 ---
 
 # /stream
@@ -26,6 +26,19 @@ python3 _system/stream.py run --view notes/main.md
 
 Folds text you typed between cards into new cards, restores any card bodies you edited
 (records win), re-renders, clears the dirty flag.
+
+## Harvest in-body annotations (the Annotate button)
+
+```
+python3 _system/stream.py annotate --view notes/main.md
+```
+
+Type a note *inside* a card as a line that is solely an inline-code span — `` `like this` `` —
+right under the thing you're annotating. `annotate` diffs each edited card against its record,
+lifts every such note into its own `fish` reply card that quotes the annotated excerpt as a
+nested `[!quote]` callout, then restores the host bodies (records win, so the host id is never
+touched). Deterministic capture, no LLM — the same lane as `fold`. Non-sigil edits are left to
+the restore (discarded), so an accidental typo-fix is never mistaken for a note.
 
 ## Inspect / repair
 

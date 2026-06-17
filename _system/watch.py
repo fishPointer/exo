@@ -253,7 +253,10 @@ def _argv(action: str, view: str | None) -> list[str] | None:
         "run":      ["run", *v],
         "diff":     ["diff", *v],
         "fold":     ["fold", *v],          # deterministic: floating -> fish cards
-        "render":   ["render", *v, "--write"],
+        "annotate": ["annotate", *v],      # deterministic: in-body `…` notes -> fish cards
+        "pull":     ["pull", *v],          # extract code-highlights -> codeblocks below the ---
+        "render":   ["render", *v, "--write"],          # non-destructive: cards rebuilt, staging kept
+        "reset":    ["render", *v, "--write", "--hard"], # flask/Restore: dissolve edits + staging -> canonical
         "validate": ["validate"],          # store-wide; ignores view
         "scan":     ["scan"],              # vault-wide; ignores view
     }.get(action)
@@ -270,7 +273,7 @@ def run_action(action: str, view: str | None = None) -> tuple[bool, str]:
     p = subprocess.run([sys.executable, str(STREAM), *argv],
                        capture_output=True, text=True, cwd=str(ROOT))
     ok = p.returncode in (0, 2)            # 2 = diff found changes (informational)
-    if action in ("run", "render"):
+    if action in ("run", "render", "reset", "annotate", "pull"):
         fire_reload(view)                  # nudge Obsidian after a write
     return ok, f"$ stream.py {' '.join(argv)}\n{p.stdout}{p.stderr}".rstrip()
 

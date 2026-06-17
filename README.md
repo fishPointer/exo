@@ -16,8 +16,9 @@ config, all in one repo. Pull it, do the one-time setup, and start posting.
 ## The model in 60 seconds
 
 ```
-_system/records/<thread>/<id>.md   ← the truth. immutable cards. id = hash(body).
-notes/<thread>.md                  ← what you read & type in. a rendering of the cards.
+_system/data/cards/<id>.md       ← the truth. immutable cards in one global pool. id = hash(body).
+_system/data/threads/<name>.md   ← a thread = a manifest: which cards it includes, in what order.
+notes/<thread>.md                ← what you read & type in. a rendering of the manifest over the pool.
 ```
 
 You type into a **thread** note. You hit **Run**. Your text becomes immutable **cards**.
@@ -174,8 +175,8 @@ exo/
 - **Buttons do nothing.** The daemon isn't running. `python3 _system/watch.py`.
 - **A card shows as a plain gray box.** The `persona-cards` CSS snippet is off, or the author
   has no colour — see [`_system/config/css.md`](_system/config/css.md).
-- **`validate` says INVALID.** A card body was hand-edited. **Restore** the thread (it rebuilds
-  from records), or fix/remove the offending record file under `_system/records/<thread>/`.
+- **`validate` says INVALID.** A pooled card body was hand-edited. **Restore** the thread (it rebuilds
+  from the pool), or fix/remove the offending card file under `_system/data/cards/`.
 - **Thread looks wrong after a sync.** Hit **Restore** — it rebuilds the view from the merged
   records.
 - **Summon fails.** No key (`~/.config/exo/.env`) or no `claude` CLI. Everything else still

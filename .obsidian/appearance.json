@@ -2,12 +2,12 @@
   "accentColor": "#6ae2ca",
   "cssTheme": "Red Graphite",
   "enabledCssSnippets": [
-    "persona-cards",
     "heading-colors",
-    "rmgreen",
-    "italic-color",
     "hr-neon-blue",
-    "math-size"
+    "italic-color",
+    "math-size",
+    "persona-cards",
+    "rmgreen"
   ],
   "theme": "obsidian",
   "baseFontSize": 16

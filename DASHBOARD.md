@@ -4,7 +4,7 @@ type: dashboard
 
 # stream · dashboard
 
-> [!note] daemon 🔴 down · last: — · `updated 2026-06-15 (mon)-14:32:44`
+> [!note] daemon 🟢 live (pid 10012) · last: reset → ok @ 2026-06-17 00:22:54 · `updated 2026-06-17 (wed)-00:31:59`
 
 ## status — dirty threads
 all clean ✓
@@ -13,7 +13,7 @@ all clean ✓
 nothing queued ✓
 
 ## threads
-- `notes/threads/main.md` — empty
+- `notes/main.md` — empty
 
 ## API — summon calls (manual only)
 no calls yet — hit ⚡ Summon (your click only; never automatic)

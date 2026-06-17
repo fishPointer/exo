@@ -13,7 +13,8 @@
 //   ▶ play   Run       reconcile THIS thread: check -> fold -> restore -> render
 //   🧠 brain  Scan      vault-wide dirty pass: flag every thread + write dirty.json
 //   ⚛ atom   Validate  content-address integrity (every card hashes to its id)
-//   🧪 flask  Restore   wash away unsaved edits: re-render THIS view from records
+//   🧪 flask  Restore   HARD reset THIS view: dissolve edits + the staged draft, rebuild from records
+//                       (the deliberate wash; a plain/synced re-render keeps your draft, this drops it)
 //   ⚡ zap    Summon    fire ONE API call (your click only) — headless claude runs
 //                       in the vault (its skills+memories), reads the dashboard, replies
 //   — minus  (spacer, inert) — caps the group above the core ribbon icons
@@ -28,10 +29,12 @@ const TRIGGER_PATH = '.stream/trigger.json';
 //  kind 'spacer'  => inert divider
 const PRIMITIVES = [
   { id: 'run',      label: 'Run',       icon: 'play',          kind: 'backend', action: 'run' },
+  { id: 'annotate', label: 'Annotate',  icon: 'pencil',        kind: 'backend', action: 'annotate' },
+  { id: 'pull',     label: 'Pull',      icon: 'scissors',      kind: 'backend', action: 'pull' },
   { id: 'scan',     label: 'Scan',      icon: 'brain',         kind: 'backend', action: 'scan' },
   { id: 'validate', label: 'Validate',  icon: 'atom',          kind: 'backend', action: 'validate' },
   { id: 'spacer',   label: 'spacer',    icon: 'minus',         kind: 'spacer' },
-  { id: 'render',   label: 'Restore',   icon: 'flask-conical', kind: 'backend', action: 'render' },
+  { id: 'reset',    label: 'Restore',   icon: 'flask-conical', kind: 'backend', action: 'reset' },
   { id: 'summon',   label: 'Summon',    icon: 'zap',           kind: 'backend', action: 'summon' },
 ];
 

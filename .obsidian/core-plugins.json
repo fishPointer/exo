@@ -8,7 +8,7 @@
   "tag-pane": false,
   "properties": true,
   "page-preview": true,
-  "daily-notes": false,
+  "daily-notes": true,
   "templates": false,
   "command-palette": true,
   "editor-status": true,

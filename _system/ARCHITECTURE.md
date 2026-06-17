@@ -9,18 +9,21 @@ threads that a team appends to from multiple devices, asynchronously, with no se
 
 ## 1. One idea
 
-> A thread is a pile of immutable cards. A card's name is the hash of its body. The thread
-> you read is a *rendering* of that pile — derived, throwaway, rebuildable at any time.
+> Cards are immutable atoms in one global pool; a card's name is the hash of its body. A thread is
+> *second-order* — a manifest that **includes** cards (by id-list, or a query) in an order. The
+> thread you read is a *rendering* of that manifest over the pool: derived, throwaway, rebuildable.
 
 Everything below falls out of that.
 
 ```
-_system/records/<thread>/<id>.md   ← SOURCE OF TRUTH. immutable. id = hash(body).
-notes/<thread>.md                  ← VIEW. a rendering of the pile. derived. disposable.
+_system/data/cards/<id>.md       ← THE POOL. immutable atoms. id = hash(body). global, no partition.
+_system/data/threads/<name>.md   ← MANIFEST. inclusion (id-list, or subtree(root)) + order. IS the thread.
+notes/<thread>.md                ← VIEW. a rendering of the manifest over the pool. derived. disposable.
 ```
 
-You read and type in the **view**. The tooling reconciles the view back into **records**.
-Records never lie; views can be rebuilt from records byte-for-byte.
+You read and type in the **view**. The tooling reconciles it back into pooled **cards** and the
+thread's **manifest**. Cards never lie; a view rebuilds from manifest + pool byte-for-byte. A card is
+free — cited by any number of manifests; a thread is a lens, not a box.
 
 ---
 
@@ -79,10 +82,18 @@ button click (a new nonce in `.stream/trigger.json`) — no autonomous loop. Set
 |---|---|
 | `record` | **the primitive.** stdin body → write record → re-render view → echo the card. Every card is born here, exactly once. |
 | `run` | reconcile one thread: fold typed-in text into cards, restore edited bodies from records, re-render, clear the dirty flag. |
-| `validate` | re-hash every record in every thread; check reply links resolve within their thread. |
-| `render --write` | rebuild a view from its records (records win; discards unsaved edits). |
+| `annotate` | harvest in-body <code>`…`</code> sigil notes from edited cards into `fish` reply cards that quote the annotated excerpt as a nested callout, then restore the hosts. Deterministic capture, like `fold` — no LLM. |
+| `pull` | extract code-highlighted excerpts from the cards into ``` codeblocks below the `---` barline — drafting scaffolds to compose against. Scrub above / append below; idempotent; scaffolds survive *incidental* reconciles (record/capture/bump), and gel on `run`/`fold`. |
+| `gel` | (not a CLI verb — runs inside `run`/`fold`) each `---`-separated staging post that embeds a `pull` scaffold folds into one `fish` quote-reply card: the codeblock becomes a nested callout in the quoted card's *author* style, the surrounding prose is kept, reply_to = the quoted card. |
+| `fork` | new thread = the reply-subtree rooted at a card — writes a `subtree` manifest resolved *live* from the pool. No cards copied; any future descendant of the root appears automatically. The privileged fork. |
+| `clone` | copy a thread's manifest to a new name — two manifests over one pool, sharing history then diverging as each gets new cards. The "two people on one thread" answer. |
+| `validate` | re-hash every card in the pool; check every reply link resolves (globally) and every manifest id is pooled. |
+| `render --write` | rebuild the cards from manifest + the pool (the pool wins; in-view card-body edits discarded) — **carries the staging draft below `---` verbatim** (`_render_preserving`, §6). |
+| `render --write --hard` | the flask/**Restore** button: discriminate every local change, then dissolve in-view edits AND the staging draft, rebuilding canonical. The deliberate wash — the one path that overrides the carry, and only on the operator's click. |
 | `scan` | vault-wide: flag every drifted thread, write `.stream/dirty.json`. |
+| `bump` | the heartbeat: reconcile every dirty thread (no scrub), refresh the dashboard, print the reply-debt queue + each head's text. The agent's one-command reflex. |
 | `id` | print the enc:v1 id of a body on stdin. |
+| `locate` | reverse lookup — a stdin excerpt → its source card id(s). Whole body → `exact` (the hash, O(1)); partial span → `contains` (pool substring-scan, since a partial can't be hashed to an id). The *content*-located counterpart to annotate/pull's *position* lookup; ambiguous spans list every match. |
 | `dashboard` | compile `.stream/` state → `DASHBOARD.md`. |
 
 ### Why a sentinel file between plugin and daemon (Layer 2 ↔ 1)
@@ -114,28 +125,61 @@ the reply's source is the agent itself, so the agent pipes it straight in — no
   through `record` (capture-*at-source*, like the daemon's `claude -p | record`): one clean body
   in, a content-addressed card written, and the `render_tui` callout — `┏━ … ┃ … ┗━ enc:v1 <id>` —
   printed. The agent then **re-emits that exact frame as its terminal message**, so the operator
-  reads the bound callout directly (no `ctrl+o`) and the footer hash is the receipt. No transcript,
-  no scrape, no race; the card body == what's inside the bars, by construction. There is **no Stop
-  hook** — an earlier build had one and it raced (§6); `record` is the whole reply path now, so a
-  reply the agent doesn't `record` simply isn't carded (the dashboard's reply-debt flags it).
+  reads the bound callout directly (no `ctrl+o`) and the footer hash is the receipt. **Divergence is
+  forbidden** (CLAUDE.md rule #2): the re-emitted frame must be the *verbatim, untruncated* stdout —
+  never piped through `tail`/`head`/`sed`. Truncate it and you'll reconstruct the frame from memory
+  and abridge it into a forgery whose body no longer hashes to the footer `<id>` (this happened, and
+  the operator caught the terminal frame diverging from the Obsidian card on three replies; the store
+  was clean, the chat message was the forgery). No transcript, no scrape, no race; the card body ==
+  what's inside the bars, by construction. There is **no Stop hook** — an earlier build had one and it
+  raced (§6); `record` is the whole reply path now, so a reply the agent doesn't `record` simply isn't
+  carded (the dashboard's reply-debt flags it).
 
 This is **mirroring/at-source authoring, not generation** — `record` copies the agent's own piped
 bytes, the prompt hook the operator's; both stay clear of the no-autonomous-loop rule (only `Summon`
 hits the API, on a click). The summon lane records its own reply as `claude-api` (red) and sets
 `STREAM_SUMMON`; content-addressing dedupes any overlap to one card.
 
+### Bump: the reply cadence
+
+The agent's turns are paced by **`bump`** — the operator's nudge that it's the agent's beat. One
+bump = `dashboard → reply-debt → generate the owed replies across every thread`. It is the read side
+of the same no-loop contract as `Summon`: the agent acts only when bumped, never on a timer. The
+operator points at what they want addressed by **code-highlighting** a span (`` `like this` ``, inline
+like bold); `annotate` lifts that span into a `[!quote]` card, and the next bump answers it. The
+procedure is the `/bump` skill; the rule is in CLAUDE.md.
+
 ---
 
-## 4. Records are partitioned by thread
+## 4. Cards pool globally; threads are manifests
 
-`_system/records/<thread>/<id>.md` — one directory per thread. A card physically cannot leak
-into another thread's view, and the **same short body in two threads is two files** (same id,
-different directories), not a hash collision that silently drops one. ("ok" in two threads is
-common; this is not a corner case.) Replies (`reply_to`) resolve *within* a thread.
+`_system/data/cards/<id>.md` — one global, content-addressed **pool**, no per-thread partition. The
+**same body in two threads is ONE pooled card**, cited by both threads' manifests — content-addressing
+finishing its job (one body → one id → one file), where the old layout kept two copies in two dirs.
 
-This is the one place the design departs from the original single-thread proof, and it's why
-`load_records`/`write_record` take a thread directory. `test_golden.py` checks the isolation
-property directly.
+A thread is a **manifest**, `_system/data/threads/<name>.md` — frontmatter `include: list | subtree`
+(+ `root:` for subtree) over an ordered set of card-ids:
+
+- **`list`** — an explicit, ordered id-set. The default; equals the old behaviour, now made *data*
+  instead of a folder. New cards append their id.
+- **`subtree`** — `root: <id>`; the inclusion is `root` + all its `reply_to`-descendants, resolved
+  *live* from the global graph. This is `fork`: promote any branch into its own thread without copying.
+
+`load_records(thread)` resolves the manifest → the pool; `write_record(card, thread)` appends the card
+to the pool (written once) and adds its id to the manifest. `records_dir(thread)` now returns the thread
+*name*, not a directory. Replies (`reply_to`) are a single **global** graph and resolve across the pool,
+not within a partition.
+
+Why this shape: a thread becomes diffable and queryable like a card (diff the inclusion; `clone` = copy
+it; a query *is* an inclusion); and the old partition — the one place the design refused to let the
+global hash be global — is *deleted*, not maintained. `test_golden.py` [3] pins the dedup (one pooled
+card, two manifests cite it) and [9] pins fork (subtree) + clone (independent divergence).
+
+**Migration is lazy and lossless.** A legacy `_system/records/<thread>/` converts to pool + manifest on
+first touch (`_migrate_if_needed`), idempotent, and the old `records/` tree is **left in place as a
+backup** — not authoritative. The doctor's `manifests resolve to pooled cards` check guards the one new
+fault: a `list` id with no pooled card is silently dropped by `load_records`, so it never shows as
+render-drift.
 
 ---
 
@@ -146,13 +190,20 @@ Sync distributes the *content*. They don't overlap (see `.gitignore` and the roo
 
 Why it doesn't corrupt under concurrent editing:
 
-- **Two people add cards offline.** Different bodies → different ids → different files. On
-  sync they merge as two new files. No conflict. Same body → same id → same file → sync sees
+- **Two people add cards offline.** Different bodies → different ids → different files in the pool.
+  On sync they merge as two new files. No conflict. Same body → same id → same file → sync sees
   identical content → still no conflict.
+- **Manifests merge by union.** A thread's manifest is an ordered id-list; two devices appending
+  different cards diverge into a set-union of ids, each a real pooled card — so the thread re-renders
+  cleanly from the merged manifest. (Coordinating the brief *draft* window two people might edit at
+  once is advisory **presence**, a pending concurrency layer — not a lock.)
 - **A view file conflicts** (both edited `main.md`). The view is *derived*, so the conflict
-  doesn't matter: hit **Restore** (`render --write`) on either device and the view is rebuilt
-  identically from the merged record set. You never lose data to a view conflict, because the
-  view was never the data.
+  doesn't matter: any re-render rebuilds the card region identically from the merged pool + manifest.
+  You never lose data to a view conflict, because the view was never the data — and a *plain* re-render
+  (automatic, or a sync-triggered regenerate on another device) **carries the staging draft below the
+  `---` verbatim** (§6), so it can't clobber an uncommitted draft. The flask/**Restore** button is the
+  one deliberate exception — `render --hard`, the explicit wash that *does* dissolve the draft, because
+  the operator asked for canonical.
 
 Content-addressing turns "distributed write conflict" into "set union." That's the trick.
 
@@ -164,14 +215,35 @@ make one person's button click fire on everyone's machine.
 
 ## 6. Where it breaks (known edges, by design)
 
-- **Hand-editing a record or a card body** breaks the address. `run`/`render` restore card
-  bodies from records, so an in-view body edit is *discarded* — that's intentional, not a bug.
-  To genuinely change history, delete the record file and `render --write`.
+- **Hand-editing a pooled card body** breaks the address. `run`/`render` restore card bodies from
+  the pool, so an in-view body edit is *discarded* — that's intentional, not a bug. To genuinely
+  change history, delete the pooled card and `render --write`.
+  - **The re-render is non-destructive — the substrate.** A view has two regions: the CARD region
+    (above the staging `---`, derived — rebuilt from the pool, in-view edits discarded) and the
+    STAGING region (below it — the operator's uncommitted draft). Every re-render regenerates the
+    cards but carries the staging **verbatim** (`_render_preserving`), so a plain regenerate — a CLI
+    `render --write`, a fork/clone, a sync-triggered re-render on another device — can never clobber a
+    draft. Drift detection compares the card region only; the staging is never drift. The one path that
+    *does* dissolve the staging is the flask/**Restore** button (`render --hard` / `_render_hard`), and
+    only because the operator deliberately asked: it diffs the local changes, then washes the edits and
+    the draft back to canonical.
+  - **Staged work is also never scrubbed by an append.** Both append paths (`record` a reply,
+    `capture` a prompt) run a *reconcile first* (`_reconcile_view`): fold floating drafts into fish
+    cards and file any whole new card typed in the view — THEN append, THEN re-render, with
+    code-highlights re-applied and `pull` scaffolds preserved. So a draft you left unsaved before
+    bumping is carded, not erased. (Folding into cards is the append paths' behaviour; a plain
+    `render --write` does not fold — it just carries the staging, per the substrate above.) (Whole-line `…` sigil notes are NOT harvested by the
+    reconcile — that needs an explicit `annotate` or `run`; see the deferred reconcile-coherence
+    work. Composed `pull` scaffolds gel only on `run`/`fold`, not on an incidental reconcile.)
 - **`normalize` drift** (an editor that rewrites line endings or unicode form) would change
   ids. The golden tests catch it; `alwaysUpdateLinks: false` in `.obsidian/app.json` stops
   Obsidian from rewriting `[[wikilinks]]` inside cards.
-- **No record-level deletion verb.** Removal is a deliberate manual act (operator deletes the
-  file). The store is append-only on purpose.
+- **No deletion verb.** Removal is a deliberate manual act: drop a card's id from a thread's manifest
+  to remove it *there*, or delete the pooled card to retire it everywhere. The store is append-only on
+  purpose.
+- **A manifest id with no pooled card** is silently dropped from the view by `load_records`, so it
+  can't surface as render-drift — the doctor checks `manifests resolve to pooled cards` directly.
+  (`subtree` manifests resolve live and can't dangle.)
 - **Summon is single-shot and manual.** There is no autonomous reply loop and adding one
   requires explicit operator sign-off (it's a standing rule, not an oversight).
 - **A reply the agent never `record`s isn't carded.** That's the cost of capture-at-source, and
@@ -190,8 +262,8 @@ make one person's button click fire on everyone's machine.
 
 Distilled from the `stream-cleanroom` proof (P0–P3: `enc:v1` pinned against 115 records,
 deterministic spine, render round-trip, sentinel daemon, reactive + Summon lanes). This
-deployable strips it to the spine, partitions records by thread for multi-thread/team use,
-makes every path self-locating, and ships empty.
+deployable strips it to the spine, pools cards globally with threads as manifests (fork/clone/query
+as manifest ops) for multi-thread/team use, makes every path self-locating, and ships empty.
 
 Grounding: log-as-source-of-truth, content-addressing, change-data-capture, idempotence
 (Kleppmann, *Designing Data-Intensive Applications*, ch. 11–12); the view-from-records split

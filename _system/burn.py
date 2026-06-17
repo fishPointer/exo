@@ -40,7 +40,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import stream  # noqa: E402
 
 ROOT = stream.ROOT
-RECORDS_ROOT = stream.RECORDS_ROOT          # _system/records/<thread>/  (the cards)
+RECORDS_ROOT = stream.RECORDS_ROOT          # _system/records/<thread>/  (LEGACY store; migrated -> pool)
+CARDS_DIR = stream.CARDS_DIR                # _system/data/cards/  (the global card POOL — the truth)
+THREADS_DIR = stream.THREADS_DIR            # _system/data/threads/  (thread MANIFESTS: inclusion + order)
 THREAD_DIR = stream.THREAD_DIR              # notes/  (the thread views, flat)
 DEFAULT_VIEW = stream.DEFAULT_VIEW          # notes/main.md  (the tracked seed thread)
 STREAM_DIR = stream.STREAM_DIR              # .stream/  (local, gitignored, unsynced)
@@ -55,12 +57,20 @@ SEED_VIEW_NAME = "main.md"                  # the one thread a fresh clone ships
 
 # ── survey ────────────────────────────────────────────────────────────────────
 
-def _record_dirs() -> list[pathlib.Path]:
+def _pool_count() -> int:
+    return len(list(CARDS_DIR.glob("*.md"))) if CARDS_DIR.exists() else 0
+
+
+def _manifests() -> list[pathlib.Path]:
+    return sorted(THREADS_DIR.glob("*.md")) if THREADS_DIR.exists() else []
+
+
+def _legacy_dirs() -> list[pathlib.Path]:
     return sorted(d for d in RECORDS_ROOT.glob("*") if d.is_dir()) if RECORDS_ROOT.exists() else []
 
 
-def _record_count() -> int:
-    return sum(len(list(d.glob("*.md"))) for d in _record_dirs())
+def _legacy_count() -> int:
+    return sum(len(list(d.glob("*.md"))) for d in _legacy_dirs())
 
 
 def _thread_views() -> list[pathlib.Path]:
@@ -70,16 +80,17 @@ def _thread_views() -> list[pathlib.Path]:
 def _survey() -> dict:
     views = _thread_views()
     return {
-        "threads": len(_record_dirs()),
-        "records": _record_count(),
+        "cards": _pool_count(),                       # the global pool — the source of truth
+        "manifests": len(_manifests()),               # thread manifests (inclusion + order)
+        "legacy": _legacy_count(),                    # pre-migration records/<thread>/ backup
         "views": views,
         "extra_views": [v for v in views if v.name != SEED_VIEW_NAME],
     }
 
 
 def _is_empty(s: dict) -> bool:
-    # Empty = a fresh clone: no records, no thread views beyond the seed main.md.
-    return s["records"] == 0 and not s["extra_views"]
+    # Empty = a fresh clone: empty pool, no manifests, no legacy records, no views beyond the seed.
+    return s["cards"] == 0 and s["manifests"] == 0 and s["legacy"] == 0 and not s["extra_views"]
 
 
 # ── backup + wipe ─────────────────────────────────────────────────────────────
@@ -87,10 +98,10 @@ def _is_empty(s: dict) -> bool:
 def _backup(ts: str) -> pathlib.Path:
     dest = BURNS_DIR / ts
     dest.mkdir(parents=True, exist_ok=True)
-    if RECORDS_ROOT.exists():
-        shutil.copytree(RECORDS_ROOT, dest / "records", dirs_exist_ok=True)
-    if THREAD_DIR.exists():
-        shutil.copytree(THREAD_DIR, dest / "threads", dirs_exist_ok=True)
+    for src, name in ((CARDS_DIR, "cards"), (THREADS_DIR, "threads"),
+                      (RECORDS_ROOT, "records"), (THREAD_DIR, "views")):
+        if src.exists():
+            shutil.copytree(src, dest / name, dirs_exist_ok=True)
     return dest
 
 
@@ -110,11 +121,13 @@ def _wipe_contents(root: pathlib.Path, keep: tuple[str, ...] = (GITKEEP,)) -> in
 
 
 def _reset_to_seed() -> None:
-    """Leave the content trees as a fresh clone would: records empty (.gitkeep
-    only); threads = .gitkeep + an EMPTY seed main.md (its frontmatter kept, body
-    rebuilt from the now-empty record set via the spine's own renderer)."""
+    """Leave the content trees as a fresh clone would: an empty pool and no manifests (.gitkeep only),
+    the legacy record store empty, and threads = .gitkeep + an EMPTY seed main.md (its frontmatter kept,
+    body rebuilt from the now-empty record set via the spine's own renderer)."""
     main_fm = stream._clean_fm_block(DEFAULT_VIEW)          # capture before wiping
-    _wipe_contents(RECORDS_ROOT)                            # all cards gone
+    _wipe_contents(CARDS_DIR)                               # the pool — every card gone
+    _wipe_contents(THREADS_DIR)                             # every thread manifest gone
+    _wipe_contents(RECORDS_ROOT)                            # legacy backup store gone
     for v in _thread_views():                              # delete every view but the seed main.md
         if v.name != SEED_VIEW_NAME:
             v.unlink()
@@ -150,8 +163,10 @@ def main() -> int:
     args = ap.parse_args()
 
     s = _survey()
-    print(f"burn — stream vault reset @ {_rel(RECORDS_ROOT)} + {_rel(THREAD_DIR)}")
-    print(f"  cards   : {s['records']} record(s) across {s['threads']} thread(s)")
+    print(f"burn — stream vault reset @ {_rel(CARDS_DIR)} + {_rel(THREADS_DIR)} + {_rel(THREAD_DIR)}")
+    print(f"  pool    : {s['cards']} card(s) in the global pool"
+          + (f"  (+ {s['legacy']} legacy record(s))" if s['legacy'] else ""))
+    print(f"  threads : {s['manifests']} manifest(s)")
     print(f"  views   : {len(s['views'])} thread view(s)"
           + (f" ({len(s['extra_views'])} beyond the seed main.md)" if s['extra_views'] else ""))
 
@@ -176,15 +191,17 @@ def main() -> int:
         print("\n--no-backup: skipping the local backup (no recovery point).")
 
     _reset_to_seed()
-    print(f"wiped all cards → {_rel(RECORDS_ROOT)}/.gitkeep")
-    print(f"reset threads  → {_rel(THREAD_DIR)}/ (empty {SEED_VIEW_NAME})")
+    print(f"wiped the pool   → {_rel(CARDS_DIR)}/.gitkeep")
+    print(f"wiped manifests  → {_rel(THREADS_DIR)}/.gitkeep")
+    print(f"wiped legacy     → {_rel(RECORDS_ROOT)}/.gitkeep")
+    print(f"reset threads    → {_rel(THREAD_DIR)}/ (empty {SEED_VIEW_NAME})")
     print("cleared .stream drift state; regenerated DASHBOARD.md")
     print("\nvault reset to the empty seed scaffold.")
     if backup:
         print("recover the prior content with:")
-        print(f"  cp -r {_rel(backup)}/records/* {_rel(RECORDS_ROOT)}/ && "
-              f"cp -r {_rel(backup)}/threads/* {_rel(THREAD_DIR)}/ && "
-              f"python3 _system/stream.py scan")
+        print(f"  cp -r {_rel(backup)}/cards/* {_rel(CARDS_DIR)}/ && "
+              f"cp -r {_rel(backup)}/threads/* {_rel(THREADS_DIR)}/ && "
+              f"python3 _system/stream.py validate")
     return 0
 
 

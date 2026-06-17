@@ -22,6 +22,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from datetime import datetime
 
 # Self-locating: ROOT is the vault root (parent of _system/). The hook captures
 # into the default thread; override with EXO_THREAD (a path relative to ROOT).
@@ -50,12 +51,28 @@ def main() -> int:
     if prompt.startswith(SYNTHETIC_PREFIXES):   # harness noise, not the operator
         return 0
     try:
-        subprocess.run(
+        r = subprocess.run(
             [sys.executable, str(STREAM), "capture", "--view", str(THREAD)],
             input=prompt, text=True, capture_output=True, timeout=30)
-    except Exception:
-        pass            # never block prompt submission on a capture failure
+        if r.returncode != 0:                          # capture ran but failed — don't lose the turn
+            _log_failure(prompt, f"exit {r.returncode}: {(r.stderr or '').strip()[:500]}")
+    except Exception as e:                             # never BLOCK prompt submission, but never
+        _log_failure(prompt, repr(e))                  # silently drop it either — leave a durable trace
     return 0            # silent: no stdout -> no context injection
+
+
+def _log_failure(prompt: str, error: str) -> None:
+    """A capture failure must not vanish — append the raw operator prompt to a local-only
+    sidecar so nothing the operator typed is lost unsignalled (the hook's whole reason to exist)."""
+    try:
+        log = ROOT / ".stream" / "capture-failures.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"),
+                                "error": error, "prompt": prompt}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass            # last resort — still never block the prompt
+
 
 if __name__ == "__main__":
     sys.exit(main())

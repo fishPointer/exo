@@ -253,16 +253,32 @@ def _run(argv: list[str]):
 
 
 def _drift() -> list[pathlib.Path]:
-    """Threads whose view differs from a fresh render AND are not flagged dirty
-    (a `dirty` thread is known unsaved work, not drift)."""
+    """Threads whose CARD region differs from a fresh render AND are not flagged dirty
+    (a `dirty` thread is known unsaved work, not drift). The staging zone below the cards' `---` is
+    the operator's uncommitted draft — the non-destructive re-render carries it verbatim, so a staging
+    difference is never drift; only a divergent card region is."""
     out = []
     for v in stream.find_stream_views():
         recs = stream.load_records(stream.records_dir(v.stem))
         rendered = stream.render_view(recs, stream._clean_fm_block(v))
         cur = v.read_text(encoding="utf-8") if v.exists() else ""
         fm, _, _ = stream._split_frontmatter(cur)
-        if cur != rendered and fm.get("stream") != "dirty":
+        if stream._staging(cur)[0] != stream._staging(rendered)[0] and fm.get("stream") != "dirty":
             out.append(v)
+    return out
+
+
+def _orphan_refs() -> list[tuple[str, str]]:
+    """Inclusion integrity: a `list` manifest entry whose card is missing from the pool. Such an
+    id is silently dropped from the rendered view (load_records skips it), so it never surfaces as
+    drift — the one new-layout fault the render-check can't see. (subtree manifests resolve live,
+    so they can't dangle.)"""
+    pool = stream._all_pool_cards()
+    out = []
+    if stream.THREADS_DIR.exists():
+        for m in sorted(stream.THREADS_DIR.glob("*.md")):
+            man = stream._read_manifest(m.stem)
+            out += [(m.stem, cid) for cid in man["ids"] if cid not in pool]
     return out
 
 
@@ -297,11 +313,11 @@ def main() -> int:
 
     section("the spine — does it actually work")
     gp = subprocess.run([PY, str(SYS / "test_golden.py")], capture_output=True, text=True, cwd=str(ROOT))
-    req("golden tests (enc:v1 / round-trip / isolation)", gp.returncode == 0,
+    req("golden tests (enc:v1 / round-trip / pool / fork)", gp.returncode == 0,
         "code regression — do NOT edit normalize(); see test output")
     vp = _run(["validate"])
-    req("validate (hash + referential integrity)", vp.returncode == 0,
-        "a record body was changed and no longer hashes to its name — inspect _system/records/<thread>/")
+    req("validate (pool hash + referential integrity)", vp.returncode == 0,
+        "a card body was changed and no longer hashes to its id — inspect _system/data/cards/")
     cp = subprocess.run([PY, str(STREAM), "id"], input="doctor", capture_output=True, text=True, cwd=str(ROOT))
     req("CLI entrypoint (`id` == library card_id)",
         cp.returncode == 0 and cp.stdout.strip() == stream.card_id("doctor"))
@@ -319,6 +335,10 @@ def main() -> int:
     req("threads render clean from records", not drift,
         ("drifted: " + ", ".join(str(v.relative_to(ROOT)) for v in drift) +
          ("  (run with --fix to reconcile)" if not FIX else "  (`stream.py run --view <t>`)")))
+    orphans = _orphan_refs()
+    req("manifests resolve to pooled cards", not orphans,
+        "manifest cites a card missing from the pool (silently dropped from the view): " +
+        ", ".join(f"{t}:{c}" for t, c in orphans[:6]))
 
     section("daemon")
     daemon = stream._read_json(stream.STREAM_DIR / "daemon.json", {})

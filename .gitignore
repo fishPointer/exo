@@ -3,10 +3,16 @@
 # So the repo stays empty of threads/records — they live in Obsidian Sync.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# content — synced via Obsidian, never committed (keep the seed thread + record store).
-# Thread VIEWS live flat in notes/; the immutable CARDS live under _system/records/.
+# content — synced via Obsidian, never committed (keep the seed thread + the empty scaffold).
+# Thread VIEWS live flat in notes/; the CARDS are a global pool under _system/data/cards/;
+# a thread is a MANIFEST under _system/data/threads/. (_system/records/ is the legacy store,
+# kept as a migration backup.) Only the empty .gitkeep scaffold + the seed main.md are tracked.
 notes/*
 !notes/main.md
+_system/data/cards/*
+!_system/data/cards/.gitkeep
+_system/data/threads/*
+!_system/data/threads/.gitkeep
 _system/records/*
 !_system/records/.gitkeep
 

@@ -38,9 +38,11 @@ needs a human — look for `✗`.
   present and enabled — including the `claude-tui`/`claude-api` callout styling in
   `persona-cards.css` (without it, terminal-voice and summon cards fall back to the default
   callout background).
-- **the spine** — golden tests (enc:v1 / round-trip / thread isolation); `validate` (every
-  card hashes to its name, reply links resolve); the CLI dispatches; **every thread
-  re-renders byte-identical from its records** (no drift).
+- **the spine** — golden tests (enc:v1 / round-trip / global pool + inclusion / fork+clone);
+  `validate` (every pooled card hashes to its id, reply links resolve); the CLI dispatches;
+  **every thread re-renders byte-identical from its manifest + the pool** (no drift); and
+  **every manifest id resolves to a pooled card** (inclusion integrity — a dangling id would be
+  silently dropped from the view).
 - **daemon** — whether `watch.py` is running.
 
 ## What `--fix` repairs (and what it won't)
@@ -62,8 +64,8 @@ It deliberately **won't** auto-"fix":
 
 - **`✗ golden tests`** — a code regression (someone changed `normalize()`). Real bug; read the
   test output. Don't paper over it.
-- **`✗ validate`** — a record's body no longer hashes to its name: data corruption. The doctor
-  can't know the correct body. Inspect `_system/records/<thread>/` and fix or remove the file.
+- **`✗ validate`** — a pooled card's body no longer hashes to its id: data corruption. The doctor
+  can't know the correct body. Inspect `_system/data/cards/<id>.md` and fix or remove the file.
 - **`✗ <source file> missing`** — a broken clone. `git checkout -- <path>`.
 - **malformed JSON** in a config — it refuses to clobber your file; fix the JSON (or delete it
   and re-run, then it writes the canonical version).
