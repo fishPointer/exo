@@ -1,13 +1,20 @@
 ---
 name: initialize
-description: Verify AND repair the vault — run the golden tests, integrity checks, re-render every thread, and audit the hook/plugin/snippet/config wiring, fixing every safely-fixable fault and reporting the rest. Use at first setup, after pulling apparatus changes, when something looks off, or whenever you want a clean baseline.
+description: The agent's wake-up. Verify AND repair the vault — run the golden tests, integrity checks, re-render every thread, and audit the hook/plugin/snippet/config wiring, fixing every safely-fixable fault and reporting the rest — then orient: read the dashboard's reply-debt + recent work back and confirm where we left off, like clocking in and checking your email before starting. Use at the start of a session, at first setup, after pulling apparatus changes, when something looks off, or whenever you want a clean baseline.
 ---
 
 # /initialize
 
-Runs the deterministic health-and-repair pass and reports. No LLM guessing — it
-executes `_system/doctor.py --fix`, which verifies everything, repairs what's
-safely fixable, then re-verifies.
+The agent's **wake-up**: clock in, run the deterministic health-and-repair pass, then **orient** —
+read the queue back and confirm where we left off, the way you'd log in and check your email before
+starting work. Two halves, deliberately split by who does the judging:
+
+- **The health pass is `_system/doctor.py --fix`** — no LLM guessing. It verifies everything,
+  repairs what's safely fixable, then re-verifies. Deterministic; that boundary is the point.
+- **The orientation is the agent's** (step 3) — read the *refreshed* dashboard back, reconstruct
+  where each thread left off, and confirm the action items. This is the LLM-layer half the
+  deterministic doctor can't do, and it's what makes `/initialize` a wake-up rather than just a
+  health check.
 
 ## Run it
 
@@ -23,6 +30,23 @@ safely fixable, then re-verifies.
    daemon status — the skill is what starts it. (Capture is separate: the prompt hook runs inside
    Claude Code itself, so operator prompts are captured whether or not the daemon is up; replies
    are minted by the agent via `record`.)
+3. **Orient — read your queue and confirm where we left off.** The doctor just refreshed
+   `DASHBOARD.md`; now *read it back* and turn it into an action briefing. The machine is proven
+   healthy — this step proves the **agent** is oriented. Specifically:
+   - **Read `DASHBOARD.md`** and restate, in plain language, the **reply-debt queue** (every owed
+     head + its text) and any **dirty threads**. These are the action items left on the table.
+   - **Skim the head card(s)** of each active thread to reconstruct *what* we left off on, not just
+     *that* a reply is owed — re-show a card untruncated with
+     `python3 _system/stream.py render-tui --id <id>` (omit `--id` for the head), or read the view.
+   - On a **fresh wake** (operational model not yet loaded this session), read
+     `_system/ARCHITECTURE.md` and `.claude/CLAUDE.md` so the verbs and iron rules are in hand
+     before you touch a thread.
+   - Close with an explicit **readiness line**: `N threads · M owed replies` + a one-sentence "here's
+     what we left off on — ready." Clean board → say so ("no reply debt — all clear").
+
+   This step is **read + report only**. It never auto-answers the queue — that's a `bump`, on the
+   operator's explicit nudge (rule #4). Orienting is checking your inbox; replying is a separate,
+   deliberate beat — no autonomous loop sneaks in here.
 
 Exit 0 = healthy (possibly after repairs). Exit 1 = something still failing that
 needs a human — look for `✗`.

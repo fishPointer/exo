@@ -44,7 +44,7 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
    it print whole, then copy it verbatim; to re-show a card, `render-tui --id <id>` (untruncated) and
    emit exactly that. There is **no Stop hook** scraping the transcript — that was a misfeature, it raced,
    and it's gone (ARCHITECTURE.md §6); a reply you don't `record` simply isn't carded, and the
-   dashboard's reply-debt shows the unanswered head. To re-show an existing card use
+   dashboard's reply-debt shows the unanswered head(s) — one per open lane. To re-show an existing card use
    `render-tui --id <id>` (omit `--id` for the head); author into another thread/persona with
    `--view notes/<t>.md` / `--author <name>`. Optional `--flair "◈ …"` sets the italic header
    glance-line — keep it to **3–6 words**, never a summary (the body carries the detail). Never
@@ -69,13 +69,13 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
 | `gel` (inside `run`/`fold`) | each `---`-separated staging post embedding a `pull` scaffold → one fish quote-reply card; the codeblock becomes a nested callout in the quoted author's style, prose kept |
 | `fork --from <id> --as <t>` | new thread = the reply-subtree rooted at a card — writes a `subtree` manifest, resolved live from the pool; no cards copied |
 | `clone --from <t> --as <t2>` | copy a thread's manifest to a new name — two manifests over one pool, diverging independently as each gets new cards |
-| `validate` | re-hash every card in the pool; check every reply link resolves (globally) |
+| `validate` | re-hash every card in the pool; check every reply link resolves (globally); assert the reply graph is **acyclic** (a DAG); print the **edge digest** — the soft-seal fingerprint of the `child→parent` set, record it to detect a silent edge rewrite |
 | `render --view <t> --write` | rebuild the cards from manifest + the pool; the staging draft below `---` is **carried verbatim** (only in-view card-body edits are discarded) |
 | `render … --write --hard` | the flask/**Restore** button: discriminate every local change, then dissolve in-view edits AND the staging draft, rebuilding canonical — the deliberate wash (overrides the carry; diffs first, never silent) |
 | `scan` | vault-wide: flag every thread that has drifted, write `.stream/dirty.json` |
-| `bump` | the heartbeat: reconcile every dirty thread (no scrub) + print the reply-debt queue with each head's text |
+| `bump` | the heartbeat: reconcile every dirty thread (no scrub) + print the reply-debt queue — **every fish leaf** (one owed head per open lane; concurrent terminals branch the thread) — with each head's text |
 | `id` | print the enc:v1 id of a body on stdin |
-| `locate` | resolve a stdin **excerpt** → its source card id(s): a whole body hashes `exact` (O(1)); a partial span is found by pool substring-scan (`contains`); a shared span lists every match (ambiguous, never guessed) |
+| `locate` | resolve a stdin **excerpt** → its source card id(s): a whole body hashes `exact` (O(1)); a partial span is found by pool substring-scan (`contains`, **punctuation-tolerant** — curly quotes, NB-hyphen, `*`/`_` emphasis folded for matching only, never hashed); a shared span lists every match (ambiguous, never guessed) |
 
 `DASHBOARD.md` (vault root) is the live status view — daemon, dirty threads, reply debt.
 
@@ -84,7 +84,7 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
 `bump` is your clock cycle, and it's a **reflex, not a procedure**. When the operator says
 **bump** (or `/bump`): run `python3 _system/stream.py bump` — it reconciles every dirty thread
 (folds staged drafts into cards; code-highlights survive for `pull`), refreshes `DASHBOARD.md`,
-and prints the **reply-debt** queue with each owed head's text. Then `record` one reply per head
+and prints the **reply-debt** queue — **every fish leaf**, one owed head per open lane (concurrent terminals branch the thread) — with each owed head's text. Then `record` one reply per head
 it lists and re-emit the frame (rule #2). That's it — no scanning, no re-validating, no narrating
 the steps; the verb already put the rails in front of you. Clean queue → say "no debt" and stop.
 It is **not** an autonomous loop — it fires only on an explicit bump, like `Summon` (rule #4).

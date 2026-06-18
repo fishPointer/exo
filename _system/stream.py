@@ -42,6 +42,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -65,6 +66,7 @@ CHANGESETS_DIR = STREAM_DIR / "changesets"
 DIRTY_INDEX = STREAM_DIR / "dirty.json"
 API_LOG = STREAM_DIR / "api-log.jsonl"
 SUMMON_INFLIGHT = STREAM_DIR / "summon-inflight.json"
+SESSIONS_DIR = STREAM_DIR / "sessions"      # per-terminal lane pointers (local; never synced)
 DASHBOARD = ROOT / "DASHBOARD.md"           # the derived status view (root)
 
 
@@ -757,6 +759,28 @@ def cmd_id(args) -> int:
     return 0
 
 
+# Content-MATCH folding (compare-only; never stored, never hashed). An editor or a copy/paste
+# round-trip silently rewrites punctuation — straight quotes -> curly, hyphen-minus -> a
+# typographic/non-breaking hyphen, space -> NBSP, `*emph*` -> `_emph_`. Those bytes diverge from
+# the straight-ASCII source card, so a hand-pasted excerpt stops substring-matching its origin and
+# `locate`/`gel` silently miss. We fold them away for MATCHING only. Deliberately NOT in
+# `normalize`/`card_id`: folding there would re-address every existing card (the enc:v2 one-way
+# door). Locate tolerance is free — the id scheme is untouched.
+_CMP_FOLD = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "‟": '"',          # “ ” „ ‟  -> "
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",          # ‘ ’ ‚ ‛  -> '
+    "′": "'", "″": '"',                                        # ′ ″ primes
+    "‐": "-", "‑": "-",                                        # ‐ ‑ hyphen / non-breaking hyphen
+    " ": " ",                                                       # NBSP -> space
+    "_": "*",                                                            # markdown emphasis fold
+})
+
+
+def _cmp_fold(s: str) -> str:
+    """Punctuation-tolerant form for CONTENT MATCHING ONLY — see `_CMP_FOLD`. Never hashed."""
+    return s.translate(_CMP_FOLD)
+
+
 def _locate(excerpt: str) -> tuple:
     """Resolve a bare EXCERPT to the source card id(s) by CONTENT — the out-of-band counterpart to
     `annotate`/`pull`, which know an excerpt's source by its POSITION in the view. Two tiers, cheapest
@@ -769,9 +793,9 @@ def _locate(excerpt: str) -> tuple:
     cid = card_id(excerpt)                                   # exact: a full body hashes straight to its id
     if _card_path(cid).exists():
         return ("exact", [cid])
-    needle = "\n".join(l.rstrip() for l in excerpt.strip().split("\n"))
+    needle = _cmp_fold("\n".join(l.rstrip() for l in excerpt.strip().split("\n")))
     hits = [c.id for c in sorted(_all_pool_cards().values(), key=_sort_key)
-            if needle in "\n".join(l.rstrip() for l in c.body.split("\n"))]
+            if needle in _cmp_fold("\n".join(l.rstrip() for l in c.body.split("\n")))]
     return ("contains", hits)
 
 
@@ -790,6 +814,33 @@ def cmd_locate(args) -> int:
     if len(ids) > 1:
         print(f"locate: {len(ids)} cards match — ambiguous; quote with more context", file=sys.stderr)
     return 0 if len(ids) == 1 else 2
+
+
+def _edge_digest(pool: dict) -> str:
+    """A deterministic fingerprint of the reply graph's EDGE SET — sha256 of the sorted
+    `child->parent` pairs. Each card BODY is already sealed by its own id; the EDGES live in
+    mutable frontmatter (`reply_to`), so a rewrite is otherwise silent and `validate` still
+    passes (it only checks edges resolve, not that they're authentic). Record this digest and
+    any later edge rewrite changes it: tamper-EVIDENT, with NO re-addressing — the reversible
+    'soft seal' that precedes the enc:v2 hard seal (`id = hash(body, reply_to)`)."""
+    edges = sorted(f"{c.id}->{c.reply_to}" for c in pool.values() if c.reply_to)
+    return hashlib.sha256("\n".join(edges).encode("utf-8")).hexdigest()[:16]
+
+
+def _find_cycles(pool: dict) -> list:
+    """Card ids whose `reply_to` chain forms a cycle. The reply graph MUST be a DAG: enc:v2
+    can't hash a cycle (A's id needs B's needs A's), and a cycle is corruption regardless. Each
+    card has at most one parent (a functional graph), so a chain that revisits a node loops."""
+    bad = []
+    for start in pool:
+        seen, cur = set(), start
+        while cur in pool and pool[cur].reply_to:
+            cur = pool[cur].reply_to
+            if cur == start or cur in seen:
+                bad.append(start)
+                break
+            seen.add(cur)
+    return sorted(set(bad))
 
 
 def cmd_validate(args) -> int:
@@ -811,7 +862,13 @@ def cmd_validate(args) -> int:
     print(f"referential:        {n - len(bad_ref)}/{n} reply_to edges resolve")
     for cid, tgt in bad_ref:
         print(f"  ✗ {cid}: reply_to -> {tgt} (missing from pool)")
-    ok = not bad_hash and not bad_ref
+    cyclic = _find_cycles(pool)
+    n_edges = sum(1 for c in pool.values() if c.reply_to)
+    print(f"acyclic:            {'yes' if not cyclic else 'NO'} ({n_edges} edges form a DAG)")
+    for cid in cyclic:
+        print(f"  ✗ {cid}: reply_to chain forms a cycle")
+    print(f"edge digest:        {_edge_digest(pool)}  (soft seal — record to detect edge rewrites)")
+    ok = not bad_hash and not bad_ref and not cyclic
     print("VALID ✓" if ok else "INVALID ✗")
     return 0 if ok else 1
 
@@ -1058,6 +1115,45 @@ def _next_ts(records: dict, offset: int = 0) -> str:
     return (base + timedelta(seconds=offset)).strftime("%Y-%m-%d (%a)-%H:%M:%S").lower()
 
 
+# ── per-terminal lane pointers ────────────────────────────────────────────────
+# A reply must bind to the turn it ACTUALLY answers, not to whatever card another
+# concurrent terminal happened to append last. The terminal's Claude session id is
+# the lane key (reachable at both ends: the hook's stdin `session_id`, and
+# `CLAUDE_CODE_SESSION_ID` in the env `record` runs in). `.stream/sessions/<sid>.json`
+# tracks this session's tip per thread; absent → callers fall back to the global head,
+# so pure-CLI and single-terminal use are byte-for-byte unchanged.
+
+def _session_lane(sid: str | None, thread: str) -> str | None:
+    """The id of THIS terminal's last card in `thread` (its lane tip), or None when the
+    session is unknown or has posted nothing here yet."""
+    if not sid:
+        return None
+    data = _read_json(SESSIONS_DIR / f"{sid}.json", {})
+    return (data.get("lanes") or {}).get(thread)
+
+
+def _session_advance(sid: str | None, thread: str, cid: str) -> None:
+    """Record `cid` as this session's new lane tip in `thread`. Local state; no-op without a sid."""
+    if not sid:
+        return
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    p = SESSIONS_DIR / f"{sid}.json"
+    data = _read_json(p, {})
+    data.setdefault("lanes", {})[thread] = cid
+    data["updated"] = _now_ts()
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def _reply_debt(records: dict) -> list:
+    """Owed heads = every FISH card that is a lane LEAF (no card replies to it). Under
+    concurrent terminals one thread branches into a lane per terminal, so reply-debt is
+    per-leaf — not the single globally-latest card, which would surface one lane and bury
+    the rest. Chronological."""
+    children = {c.reply_to for c in records.values() if c.reply_to}
+    return sorted((c for c in records.values() if c.id not in children and c.author == "fish"),
+                  key=_sort_key)
+
+
 def cmd_record(args) -> int:
     """THE DETERMINISM PRIMITIVE — single-source emit.
 
@@ -1075,15 +1171,19 @@ def cmd_record(args) -> int:
     view = _resolve_view(getattr(args, "view", None))
     rdir = records_dir(view.stem)
     records = _reconcile_view(view)                       # fold staged drafts FIRST — never append over them
+    sid = getattr(args, "session", None)
     reply_to = args.reply_to
-    if reply_to is None and getattr(args, "reply_head", False) and records:
-        reply_to = max(records.values(), key=_sort_key).id   # head now includes the folded draft
+    if reply_to is None and getattr(args, "reply_head", False):
+        lane = _session_lane(sid, view.stem)             # the tip of THIS terminal's lane…
+        reply_to = lane if (lane and lane in records) else (   # …not the global head, under concurrency
+            max(records.values(), key=_sort_key).id if records else None)  # fallback: single-terminal head
     if cid not in records:                               # idempotent: same body = same card
         write_record(Card(id=cid, author=args.author,
                           captured_at=args.ts or _next_ts(records),
                           reply_to=reply_to, flair=args.flair or "",
                           body=body, thread=f"[[{view.stem}]]"), rdir)
         records = load_records(rdir)
+    _session_advance(sid, view.stem, cid)                # this card is now my lane's tip
     # re-render so every VIEW (Obsidian + dashboard) is a projection of records
     _render_keep_scaffolds(view, records)
     if _is_thread(view):
@@ -1112,14 +1212,26 @@ def _compose_post(post: str, records: dict) -> tuple:
             closer = lines[i] if i < n else None               # None if the operator left it unterminated
             if closer is not None:
                 i += 1
+            # Resolve which card this fence quotes. Two grammars:
+            #   (a) explicit `pull` scaffold — first line is a bare card-id;
+            #   (b) bare excerpt — no id line (operator pasted just the quoted span), so
+            #       LOCATE its source by content. Unique hit → quote it; ambiguous (>1) or
+            #       none → keep verbatim, never guess (the contract's locate rule).
             ref = fence[0].strip() if fence else ""
             if re.fullmatch(r"[0-9a-f]{8}", ref) and ref in records:
-                refs.append(ref)
-                author = records[ref].author
+                quote_ref, excerpt = ref, fence[1:]
+            else:
+                kind, ids = _locate("\n".join(fence))
+                quote_ref = (ids[0] if kind in ("exact", "contains")
+                             and len(ids) == 1 and ids[0] in records else None)
+                excerpt = fence
+            if quote_ref is not None:
+                refs.append(quote_ref)
+                author = records[quote_ref].author
                 if body and body[-1].strip():
                     body.append("")                            # blank line before the callout
-                body.append(f"> [!{author}] {author} | [[{ref}]]")   # quote in the author's card style
-                body += [f"> {e}" if e else ">" for e in "\n".join(fence[1:]).strip("\n").split("\n")]
+                body.append(f"> [!{author}] {author} | [[{quote_ref}]]")   # quote in the author's card style
+                body += [f"> {e}" if e else ">" for e in "\n".join(excerpt).strip("\n").split("\n")]
                 body.append("")                                # blank line after the callout
             else:                                              # not a scaffold — keep VERBATIM, never
                 body += [opener, *fence] + ([closer] if closer is not None else [])  # fabricate a close
@@ -1415,21 +1527,30 @@ def cmd_capture(args) -> int:
     if cid in records:
         sys.stderr.write(f"[capture: exact dup {cid}, skipped]\n")
         return 0
+    sid = getattr(args, "session", None)
+    lane = _session_lane(sid, view.stem)              # this terminal's last card here (None if unknown)
     superseded = []
+    # Collapse the Ctrl+C interrupt-spam chain — but with a session, ONLY within MY lane,
+    # never another terminal's card that merely happens to be the global head (that would
+    # unlink a live prompt). Without a session, fall back to the original global-head walk.
     while records:
-        head = max(records.values(), key=_sort_key)
-        if head.author == "fish" and _is_resend(head.body, body):
-            _remove_from_manifest(rdir, head.id)      # drop the superseded resend from the thread
-            superseded.append(head.id)
+        prev = records.get(lane) if sid else max(records.values(), key=_sort_key)
+        if prev and prev.author == "fish" and _is_resend(prev.body, body):
+            _remove_from_manifest(rdir, prev.id)      # drop the superseded resend from the thread
+            superseded.append(prev.id)
+            if sid:
+                lane = prev.reply_to                  # reconnect up my lane to the grandparent
             records = load_records(rdir)
         else:
             break
     records = _reconcile_view(view)                   # fold staged drafts before carding the prompt
-    reply_to = max(records.values(), key=_sort_key).id if records else None
+    reply_to = (lane if (sid and lane and lane in records)   # bind to MY lane tip, not the global head
+                else (max(records.values(), key=_sort_key).id if records else None))  # fallback: head
     write_record(Card(id=cid, author="fish", captured_at=_next_ts(records),
                       reply_to=reply_to, flair="", body=body,
                       thread=f"[[{view.stem}]]"), rdir)
     records = load_records(rdir)
+    _session_advance(sid, view.stem, cid)             # this prompt is now my lane's tip
     if _is_thread(view):
         _render_keep_scaffolds(view, records)
         _refresh_dirty(view)
@@ -1575,11 +1696,11 @@ def render_dashboard() -> str:
     for v in find_stream_views():
         recs = load_records(records_dir(v.stem))
         head = max(recs.values(), key=_sort_key) if recs else None
-        threads.append((v, head, len(recs)))
+        threads.append((v, head, recs))
     o.append("## to-do — reply debt (agent's queue)")
     todo = []
-    for v, head, _n in threads:
-        if head and head.author == "fish":
+    for v, _head, recs in threads:
+        for head in _reply_debt(recs):                # every fish LEAF — one owed head per open lane
             snip = " ".join(head.body.split())
             snip = snip[:200] + ("…" if len(snip) > 200 else "")
             todo.append(f"- `{v.stem}` — reply to [[{head.id}]] (re: {head.reply_to or '—'}): {snip}")
@@ -1587,9 +1708,9 @@ def render_dashboard() -> str:
     o.append("")
 
     o.append("## threads")
-    for v, head, nrec in threads:
+    for v, head, recs in threads:
         rel = v.relative_to(ROOT)
-        o.append(f"- `{rel}` — {nrec} cards · head [[{head.id}]] ({head.author})" if head
+        o.append(f"- `{rel}` — {len(recs)} cards · head [[{head.id}]] ({head.author})" if head
                  else f"- `{rel}` — empty")
     o.append("")
 
@@ -1686,10 +1807,8 @@ def cmd_bump(args) -> int:
     debts = []
     for view in find_stream_views():
         records = load_records(records_dir(view.stem))
-        if records:
-            head = max(records.values(), key=_sort_key)
-            if head.author == "fish":
-                debts.append((view.stem, head))
+        for head in _reply_debt(records):             # every fish LEAF — one owed head per open lane
+            debts.append((view.stem, head))
     if not debts:
         print("[bump] reply-debt: none — clean beat, stop.")
         return 0
@@ -1727,6 +1846,8 @@ def main() -> int:
     prec.add_argument("--ts", default=None)
     prec.add_argument("--reply-head", dest="reply_head", action="store_true",
                       help="reply to the current head when --reply-to is omitted")
+    prec.add_argument("--session", default=os.environ.get("CLAUDE_CODE_SESSION_ID"),
+                      help="terminal/session id — binds --reply-head to THIS lane's tip, not the global head")
     prec.add_argument("--view")
     pt = sub.add_parser("render-tui", help="print a card as the TUI callout (the reply frame)")
     pt.add_argument("--id", default=None, help="card id (default: latest)")
@@ -1739,6 +1860,8 @@ def main() -> int:
     ppull.add_argument("--view")
     pc = sub.add_parser("capture", help="capture a prompt as a fish card (collapses interrupt-spam)")
     pc.add_argument("--view")
+    pc.add_argument("--session", default=os.environ.get("CLAUDE_CODE_SESSION_ID"),
+                    help="terminal/session id (the hook passes the prompt's session_id)")
     pdb = sub.add_parser("dashboard", help="compile .stream state -> DASHBOARD.md")
     pdb.add_argument("--write", action="store_true")
     sub.add_parser("bump", help="the heartbeat: reconcile all dirty threads + print the reply-debt")

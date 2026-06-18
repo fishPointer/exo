@@ -7,7 +7,7 @@ description: The heartbeat. On "bump" / "/bump", run the bump verb and answer ea
 
 A reflex. Two moves, no deliberation:
 
-1. **Run the verb.** It reconciles every dirty thread (folds staged drafts into cards; code-highlights survive for `pull`), refreshes `DASHBOARD.md`, and prints the reply-debt queue with each owed head's text:
+1. **Run the verb.** It reconciles every dirty thread (folds staged drafts into cards; code-highlights survive for `pull`), refreshes `DASHBOARD.md`, and prints the reply-debt queue — **every fish leaf**, one owed head per open lane — with each owed head's text:
    ```
    python3 _system/stream.py bump
    ```

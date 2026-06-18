@@ -47,6 +47,15 @@ The id **is** the content. Two consequences, both deliberate:
 `_system/test_golden.py` pins it. **Do not touch `normalize` without re-running the golden
 tests.**
 
+Because `normalize` *is* the address, an editor that smart-punctuates a copied span (straight
+quotes → curly, hyphen → non-breaking hyphen, `*emph*` → `_emph_`) yields **different bytes → a
+different id**, so a hand-pasted excerpt won't dedupe or `locate` against its straight-ASCII
+source. The fix that does **not** re-address the pool is a **compare-only** fold inside `locate`
+(`_cmp_fold`): smart punctuation is folded for *matching* only, never hashed. Folding it into
+`normalize` itself would re-address every existing card — that is the **`enc:v2`** change
+(`id = hash(body, reply_to)` + a punctuation-stable normalize), a deliberate one-way door held
+behind operator sign-off (§6), never a quiet bump.
+
 ---
 
 ## 3. The four layers (each one optional below the next)
@@ -87,11 +96,11 @@ button click (a new nonce in `.stream/trigger.json`) — no autonomous loop. Set
 | `gel` | (not a CLI verb — runs inside `run`/`fold`) each `---`-separated staging post that embeds a `pull` scaffold folds into one `fish` quote-reply card: the codeblock becomes a nested callout in the quoted card's *author* style, the surrounding prose is kept, reply_to = the quoted card. |
 | `fork` | new thread = the reply-subtree rooted at a card — writes a `subtree` manifest resolved *live* from the pool. No cards copied; any future descendant of the root appears automatically. The privileged fork. |
 | `clone` | copy a thread's manifest to a new name — two manifests over one pool, sharing history then diverging as each gets new cards. The "two people on one thread" answer. |
-| `validate` | re-hash every card in the pool; check every reply link resolves (globally) and every manifest id is pooled. |
+| `validate` | re-hash every card in the pool; check every reply link resolves (globally) and every manifest id is pooled; assert the `reply_to` graph is **acyclic**; print the **edge digest** (soft-seal fingerprint of the `child→parent` set — a recorded digest makes a later edge rewrite detectable, with no re-addressing). |
 | `render --write` | rebuild the cards from manifest + the pool (the pool wins; in-view card-body edits discarded) — **carries the staging draft below `---` verbatim** (`_render_preserving`, §6). |
 | `render --write --hard` | the flask/**Restore** button: discriminate every local change, then dissolve in-view edits AND the staging draft, rebuilding canonical. The deliberate wash — the one path that overrides the carry, and only on the operator's click. |
 | `scan` | vault-wide: flag every drifted thread, write `.stream/dirty.json`. |
-| `bump` | the heartbeat: reconcile every dirty thread (no scrub), refresh the dashboard, print the reply-debt queue + each head's text. The agent's one-command reflex. |
+| `bump` | the heartbeat: reconcile every dirty thread (no scrub), refresh the dashboard, print the reply-debt queue — **every fish leaf**, one owed head per open lane — + each head's text. The agent's one-command reflex. |
 | `id` | print the enc:v1 id of a body on stdin. |
 | `locate` | reverse lookup — a stdin excerpt → its source card id(s). Whole body → `exact` (the hash, O(1)); partial span → `contains` (pool substring-scan, since a partial can't be hashed to an id). The *content*-located counterpart to annotate/pull's *position* lookup; ambiguous spans list every match. |
 | `dashboard` | compile `.stream/` state → `DASHBOARD.md`. |
@@ -143,7 +152,7 @@ hits the API, on a click). The summon lane records its own reply as `claude-api`
 ### Bump: the reply cadence
 
 The agent's turns are paced by **`bump`** — the operator's nudge that it's the agent's beat. One
-bump = `dashboard → reply-debt → generate the owed replies across every thread`. It is the read side
+bump = `dashboard → reply-debt → generate the owed replies across every thread`. Reply-debt is **every fish leaf** — a fish card no card replies to — so concurrent terminals each surface their own owed head (a single global-latest head would bury every lane but one). It is the read side
 of the same no-loop contract as `Summon`: the agent acts only when bumped, never on a timer. The
 operator points at what they want addressed by **code-highlighting** a span (`` `like this` ``, inline
 like bold); `annotate` lifts that span into a `[!quote]` card, and the next bump answers it. The
@@ -255,6 +264,22 @@ make one person's button click fire on everyone's machine.
   transcript in the loop, so there is no race to lose. The discipline (every reply goes through
   `record`) is enforced by CLAUDE.md and surfaced by the dashboard's reply-debt when a head goes
   unanswered.
+- **Concurrent terminals branch one thread (handled).** A reply used to bind to the single
+  global-latest card, so N terminals collapsed into one near-linear chain. Fixed with a **per-terminal
+  lane pointer** (`.stream/sessions/<sid>.json`, keyed by the Claude session id): `record --reply-head`
+  and capture bind to *this* terminal's lane tip, falling back to the global head only when the session
+  is unknown (pure-CLI / single-terminal unchanged). Reply-debt then lists **every fish leaf**, one owed
+  head per open lane. A brand-new terminal's *first* card still falls back to the global head (no lane
+  tip yet) — a `SessionStart` seed would close that, left as a deliberate follow-up.
+- **The edge graph is mutable; the nodes aren't (soft-sealed).** A card *body* is tamper-evident (it
+  hashes to its id); a `reply_to` *edge* lives in frontmatter, so a rewrite is silent — `validate` only
+  checked that edges *resolve*. The reversible **soft seal** closes most of that gap: `validate` now
+  asserts the graph is **acyclic** and prints an **edge digest** (sha256 of the `child→parent` set), so
+  a recorded digest makes a later rewrite *detectable* with no re-addressing. The **hard seal** —
+  `enc:v2`, `id = hash(body, reply_to)`, a true Merkle-DAG where the parent is part of the address — is a
+  one-way door (re-addressing cascades to every descendant), so it stays behind operator sign-off and
+  three open questions (repair boundary / dedup axiom / threat tier): develop up to it, never flip it
+  silently.
 
 ---
 

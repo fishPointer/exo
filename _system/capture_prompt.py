@@ -50,10 +50,16 @@ def main() -> int:
         return 0
     if prompt.startswith(SYNTHETIC_PREFIXES):   # harness noise, not the operator
         return 0
+    # Bind the prompt to THIS terminal's lane, not the global head: pass the hook's
+    # session_id so `capture` resolves reply_to against this session's last card. Falls
+    # back to CLAUDE_CODE_SESSION_ID, then to the global head if neither is present.
+    sid = (data.get("session_id") or "").strip()
+    argv = [sys.executable, str(STREAM), "capture", "--view", str(THREAD)]
+    if sid:
+        argv += ["--session", sid]
     try:
         r = subprocess.run(
-            [sys.executable, str(STREAM), "capture", "--view", str(THREAD)],
-            input=prompt, text=True, capture_output=True, timeout=30)
+            argv, input=prompt, text=True, capture_output=True, timeout=30)
         if r.returncode != 0:                          # capture ran but failed — don't lose the turn
             _log_failure(prompt, f"exit {r.returncode}: {(r.stderr or '').strip()[:500]}")
     except Exception as e:                             # never BLOCK prompt submission, but never

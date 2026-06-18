@@ -58,7 +58,9 @@ python3 _system/doctor.py             # → ✓ all required checks pass — vau
 ```
 It runs the golden tests, integrity checks, re-renders every thread, and audits the hook /
 plugin / config wiring. Exit 0 = healthy. Add `--fix` (or run `/initialize`) to also **repair**
-every safely-fixable problem and report the rest.
+every safely-fixable problem and report the rest. The bare `doctor.py` is just the health check;
+**`/initialize` is the agent's session wake-up** — it runs the repair pass, starts the daemon, then
+*orients*: reads the dashboard's reply-debt and recent work back and confirms where you left off.
 
 **5. (Optional) Start the daemon** so the Obsidian buttons do something:
 ```bash

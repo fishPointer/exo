@@ -347,6 +347,96 @@ def main() -> int:
         if set(stream._locate("racetrack pattern")[1]) != {c1, c2}:
             fails.append("locate: a shared excerpt must return all matches (ambiguous), not guess one")
 
+    # 12. lane binding: under concurrent terminals a reply binds to ITS session's lane tip
+    #     (the turn it answers), NOT whatever card another terminal appended last; reply-debt
+    #     is then per fish-LEAF (one owed head per open lane). No session → global-head
+    #     fallback (single-terminal behaviour, unchanged).
+    import io
+    from argparse import Namespace
+    _saved = (stream.ROOT, stream.DASHBOARD, stream.DIRTY_INDEX, stream.SESSIONS_DIR,
+              stream.find_stream_views)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            stream.CARDS_DIR = td / "cards"; stream.THREADS_DIR = td / "threads"
+            stream.RECORDS_ROOT = td / "records"; stream.SESSIONS_DIR = td / "sessions"
+            stream.CHANGESETS_DIR = td / "cs"; stream.ROOT = td
+            stream.DASHBOARD = td / "dash.md"; stream.DIRTY_INDEX = td / "dirty.json"
+            view = td / "main.md"; view.write_text("---\ntype: stream\n---\n", encoding="utf-8")
+            stream.find_stream_views = lambda root=None: [view]
+
+            def _cap(sid, body):
+                sys.stdin = io.StringIO(body)
+                stream.cmd_capture(Namespace(view=str(view), session=sid))
+
+            def _rec(sid, body, head=True):
+                sys.stdin = io.StringIO(body)
+                stream.cmd_record(Namespace(view=str(view), session=sid, author="claude-tui",
+                                            reply_to=None, reply_head=head, flair="", ts=None))
+
+            def _p(body):
+                return stream.load_records(stream.records_dir("main"))[stream.card_id(body)].reply_to
+
+            _rec(None, "lane root", head=False)            # seed
+            _cap("A", "a1"); _cap("B", "b1")               # fresh lanes -> head fallback
+            _rec("A", "ar1"); _rec("B", "br1")             # replies bind to own lane prompt
+            _cap("A", "a2"); _cap("B", "b2")               # follow-ups bind to own lane tip
+            if _p("ar1") != stream.card_id("a1"):
+                fails.append("lane: a reply must bind to its session's prompt, not the global head")
+            if _p("br1") != stream.card_id("b1"):
+                fails.append("lane: concurrent lanes must not cross on reply")
+            if _p("a2") != stream.card_id("ar1") or _p("b2") != stream.card_id("br1"):
+                fails.append("lane: a follow-up prompt must bind to its lane tip, not the global head")
+            debt = sorted(c.id for c in stream._reply_debt(
+                stream.load_records(stream.records_dir("main"))))
+            if debt != sorted([stream.card_id("a2"), stream.card_id("b2")]):
+                fails.append("lane: reply-debt must list every fish LEAF (one per open lane)")
+            _cap(None, "no-session")                       # no session -> prior global head
+            if _p("no-session") != stream.card_id("b2"):
+                fails.append("lane: a session-less capture must fall back to the global head")
+    finally:
+        (stream.ROOT, stream.DASHBOARD, stream.DIRTY_INDEX, stream.SESSIONS_DIR,
+         stream.find_stream_views) = _saved
+
+    # 13. locate punctuation-tolerance: a hand-pasted excerpt whose punctuation an editor
+    #     smartened (curly quotes, non-breaking hyphen, `*`->`_` emphasis) still resolves to its
+    #     straight-ASCII source card. Compare-only fold — the id must NOT change (no re-addressing).
+    with tempfile.TemporaryDirectory() as td:
+        stream.CARDS_DIR = pathlib.Path(td) / "cards"
+        stream.THREADS_DIR = pathlib.Path(td) / "threads"
+        stream.RECORDS_ROOT = pathlib.Path(td) / "records"
+        src = 'the *doc-link* edge with the "head" pinned'                    # straight-ASCII source card
+        sid = stream.card_id(src)
+        stream.write_record(stream.Card(id=sid, author="renka",
+                            captured_at="2026-06-15 (mon)-12:00:00", body=src, thread="[[p]]"), "p")
+        smart = 'the _doc‑link_ edge with the “head” pinned'                  # editor-smartened paste
+        if smart == src:
+            fails.append("locatefold: fixture is not actually smartened (test is vacuous)")
+        if stream._locate(smart) != ("contains", [sid]):
+            fails.append(f"locatefold: a smart-punctuated excerpt must still locate its source, got {stream._locate(smart)}")
+        if stream.card_id(smart) == sid:
+            fails.append("locatefold: the fold must NOT change the id (that would re-address the pool)")
+
+    # 14. soft seal (the reversible pre-enc:v2 integrity layer): `_edge_digest` is a deterministic,
+    #     order-independent fingerprint of the child->parent edge set (a rewritten edge is detectable
+    #     without re-addressing); `_find_cycles` flags any reply_to cycle (the DAG invariant enc:v2
+    #     requires). Neither touches a card id.
+    def _C(cid, parent=None):
+        return stream.Card(id=cid, author="fish", captured_at="2026-06-15 (mon)-12:00:00",
+                           reply_to=parent, body=cid, thread="[[s]]")
+    dag = {"aaaaaaaa": _C("aaaaaaaa"), "bbbbbbbb": _C("bbbbbbbb", "aaaaaaaa"), "cccccccc": _C("cccccccc", "bbbbbbbb")}
+    if stream._find_cycles(dag):
+        fails.append("softseal: a DAG must report no cycles")
+    d1 = stream._edge_digest(dag)
+    if d1 != stream._edge_digest(dict(reversed(list(dag.items())))):
+        fails.append("softseal: the edge digest must be order-independent (deterministic)")
+    rewired = dict(dag); rewired["cccccccc"] = _C("cccccccc", "aaaaaaaa")     # move one edge
+    if stream._edge_digest(rewired) == d1:
+        fails.append("softseal: rewriting an edge must change the digest (tamper-evident)")
+    cyclic = dict(dag); cyclic["aaaaaaaa"] = _C("aaaaaaaa", "cccccccc")       # a->c->b->a
+    if set(stream._find_cycles(cyclic)) != {"aaaaaaaa", "bbbbbbbb", "cccccccc"}:
+        fails.append(f"softseal: a reply_to cycle must be detected, got {stream._find_cycles(cyclic)}")
+
     print(f"samples under test: {len(samples)}")
     print(f"[1] enc:v1 fixed point   {'ok' if not any(f.startswith(('idempotence','enc:v1')) for f in fails) else 'FAIL'}")
     print(f"[2] render round-trip    {'ok' if not any(f.startswith('roundtrip') for f in fails) else 'FAIL'}")
@@ -359,6 +449,9 @@ def main() -> int:
     print(f"[9] fork + clone         {'ok' if not any(f.startswith('fork') for f in fails) else 'FAIL'}")
     print(f"[10] non-destructive render{'  ok' if not any(f.startswith('substrate') for f in fails) else '  FAIL'}")
     print(f"[11] locate excerpt->hash{'  ok' if not any(f.startswith('locate') for f in fails) else '  FAIL'}")
+    print(f"[12] lane binding + debt {'ok' if not any(f.startswith('lane') for f in fails) else 'FAIL'}")
+    print(f"[13] locate punct-fold   {'ok' if not any(f.startswith('locatefold') for f in fails) else 'FAIL'}")
+    print(f"[14] soft seal edge/DAG  {'ok' if not any(f.startswith('softseal') for f in fails) else 'FAIL'}")
     if fails:
         print("\nFAILURES:")
         for f in fails:
