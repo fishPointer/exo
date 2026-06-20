@@ -56,9 +56,10 @@ from datetime import datetime, timedelta
 # paths baked into the binary).
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 NOTES_DIR = ROOT / "notes"                  # the thread VIEWS live here, flat (no subfolders)
-RECORDS_ROOT = ROOT / "_system" / "records" # LEGACY per-thread card store (kept as backup; auto-migrated)
+RECORDS_ROOT = ROOT / "_system" / "records" # vestigial legacy path (kept only for burn.py's backup sweep)
 CARDS_DIR = ROOT / "_system" / "data" / "cards"     # the global content-addressed card POOL (id.md)
-THREADS_DIR = ROOT / "_system" / "data" / "threads" # thread MANIFESTS: inclusion (id-list) + ordering
+THREADS_DIR = ROOT / "_system" / "data" / "threads" # thread MANIFESTS: derive root + render policy
+ENC_STAMP = ROOT / "_system" / "data" / "ENC"       # the pool's encoding version (`v2`); validate reads it
 THREAD_DIR = NOTES_DIR                       # views are notes/<thread>.md, directly under notes/
 DEFAULT_VIEW = NOTES_DIR / "main.md"         # used when --view is omitted
 STREAM_DIR = ROOT / ".stream"               # local daemon/runtime state (never synced)
@@ -78,21 +79,67 @@ def records_dir(view_stem: str) -> str:
     return view_stem
 
 # ════════════════════════════════════════════════════════════════════════════
-#  P0 — enc:v1 : the canonicalization contract
+#  enc:v2 : the canonicalization + Merkle-DAG address contract
 # ════════════════════════════════════════════════════════════════════════════
+#  id = sha256("enc:v2\n" + sha256(normalize(body)) + "\n" + (reply_to or "ROOT"))
+#  The reply edge is folded INTO the address: the store is a true Merkle-DAG (a card's
+#  name commits to its parent, like a git commit commits to its parent). Full 256-bit
+#  (64-hex) ids stored everywhere; an 8-char prefix is human-display ONLY. Pinned
+#  byte-for-byte by test_golden.py — a single wrong character silently re-addresses the
+#  whole pool, so the encoding is frozen there first.
+
+# Punctuation FOLDED INTO the address (enc:v2's stabilizer): bytes an editor/paste
+# silently swaps for "the same character", so folding them is safe and makes a
+# smart-quoted paste hash identically to its straight-ASCII source. Markdown emphasis
+# (`*`↔`_`) is deliberately NOT here — that's legitimate, intentional content; `locate`'s
+# `_cmp_fold` still folds it for MATCHING only (id strict, locate lenient — see §1.1).
+_NORM_FOLD = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "‟": '"',          # curly double quotes -> "
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",          # curly single quotes / apostrophes -> '
+    "′": "'", "″": '"',                                        # primes -> ' "
+    "‐": "-", "‑": "-",                                        # typographic / non-breaking hyphen -> -
+    " ": " ",                                                  # non-breaking space -> space
+})
+
+ID_RE = r"[0-9a-f]{64}"          # a structural enc:v2 id (full sha256). Display prefixes are 8-char.
+ROOT_TOKEN = "ROOT"              # the parent sentinel for a root card — disjoint from the hex alphabet,
+                                 # so parent=None can never alias a child whose parent is a real id.
+
 
 def normalize(body: str) -> str:
-    """enc:v1 canonical form. Byte-stable across editors/OS or the whole
-    content-addressing scheme breaks. Verified against all records."""
-    s = unicodedata.normalize("NFC", body)
+    """enc:v2 canonical body. NFC -> fold editor-substituted punctuation to ASCII -> rstrip each
+    line -> join with "\\n" -> strip outer blank lines -> append exactly one "\\n". Punctuation-stable:
+    a smart-quoted paste hashes identically to its straight-ASCII source. Byte-stable across
+    editors/OS or content-addressing breaks; pinned by test_golden.py. Do NOT touch without re-running
+    the golden tests."""
+    s = unicodedata.normalize("NFC", body).translate(_NORM_FOLD)
     lines = [ln.rstrip() for ln in s.split("\n")]
     s = "\n".join(lines).strip("\n")
     return s + "\n"
 
 
-def card_id(body: str, length: int = 8) -> str:
-    """The content address. id = sha256(normalize(body))[:length]."""
-    return hashlib.sha256(normalize(body).encode("utf-8")).hexdigest()[:length]
+def card_id(body: str, reply_to: str | None = None) -> str:
+    """The enc:v2 content address (a Merkle-DAG node name):
+
+        body_hash = sha256(normalize(body))            # 64 hex, fixed width
+        id        = sha256("enc:v2\\n" + body_hash + "\\n" + (reply_to or "ROOT"))
+
+    Hash-of-hashes (git's move): the body is committed via its OWN fixed-width 64-hex hash, so body
+    bytes never sit adjacent to the parent field — no body content can shift the boundary or forge a
+    parent (naive `hash(body+parent)` is injectable; rejected). The parent is part of the address, so
+    the same body under two different parents is two distinct cards (the v2 dedup-softening axiom),
+    and a rewritten edge is a different id (tamper-evident, no soft seal needed). Returns the full
+    64-hex id; `[:8]` is display only."""
+    body_hash = hashlib.sha256(normalize(body).encode("utf-8")).hexdigest()
+    parent_tok = reply_to if reply_to else ROOT_TOKEN
+    preimage = "enc:v2\n" + body_hash + "\n" + parent_tok
+    return hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+
+
+def short_id(cid: str) -> str:
+    """The 8-char human-display prefix of a full 64-hex id (git's short-hash trick). Display ONLY —
+    every stored/structural use (filenames, reply_to, manifest root, anchors) is the full id."""
+    return cid[:8]
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -204,16 +251,14 @@ def find_stream_views(root: pathlib.Path = ROOT):
 class Card:
     id: str
     author: str = "claude"
-    channel: str = "stream"
     captured_at: str = ""
     reply_to: str | None = None
     flair: str = ""
-    thread: str = ""
     body: str = ""
 
     @property
     def computed_id(self) -> str:
-        return card_id(self.body)
+        return card_id(self.body, self.reply_to)
 
 
 def _card_path(cid: str) -> pathlib.Path:
@@ -225,11 +270,12 @@ def _manifest_path(thread: str) -> pathlib.Path:
 
 
 def _card_text(card: Card) -> str:
-    """A pool card's on-disk form — frontmatter + body (only the body is hashed)."""
-    fm = ["---", f"hash: {card.id}", f"author: {card.author}", f"channel: {card.channel}"]
-    if card.thread:
-        fm.append(f'thread: "{card.thread}"')
-    fm.append(f"captured_at: {card.captured_at}")
+    """A pool card's on-disk form — frontmatter + body. Only (body, reply_to) is hashed into the id;
+    the rest is metadata. `reply_to` IS part of the address under enc:v2, so it is the one frontmatter
+    field that can't be silently rewritten without `validate` catching it (a changed edge = a changed
+    id = a hash mismatch)."""
+    fm = ["---", f"hash: {card.id}", f"author: {card.author}",
+          f"captured_at: {card.captured_at}"]
     if card.reply_to:
         fm.append(f"reply_to: {card.reply_to}")
     if card.flair:
@@ -245,37 +291,28 @@ def _load_card(cid: str) -> Card | None:
         return None
     fm, _, body = _split_frontmatter(p.read_text(encoding="utf-8"))
     return Card(id=fm.get("hash") or cid, author=fm.get("author", "claude"),
-                channel=fm.get("channel", "stream"), captured_at=fm.get("captured_at", ""),
+                captured_at=fm.get("captured_at", ""),
                 reply_to=(fm.get("reply_to") or None), flair=fm.get("flair", ""),
-                thread=fm.get("thread", ""), body=body)
+                body=body)
 
 
 def _read_manifest(thread: str) -> dict:
-    """Parse a thread manifest -> {kind, root, ids}. kind 'list' (body is an ordered set of
-    card-ids) or 'subtree' (include `root` + its reply-descendants from the pool)."""
+    """Parse a thread manifest -> {root, render}. Membership is DERIVED, not stored: a thread is the
+    subtree rooted at `root` (root + all its transitive reply_to-descendants, resolved live from the
+    global pool). No id-list — that denormalized copy could disagree with the pool, so it's gone
+    (the enc:v2 derive model). `render` is scroll|head (the doc-tier seam; only scroll is implemented)."""
     p = _manifest_path(thread)
     if not p.exists():
-        return {"kind": "list", "root": None, "ids": []}
-    fm, _, body = _split_frontmatter(p.read_text(encoding="utf-8"))
-    ids = [ln.strip() for ln in body.split("\n") if re.fullmatch(r"[0-9a-f]{8}", ln.strip())]
-    return {"kind": fm.get("include", "list"), "root": fm.get("root") or None, "ids": ids}
+        return {"root": None, "render": "scroll"}
+    fm, _, _ = _split_frontmatter(p.read_text(encoding="utf-8"))
+    return {"root": fm.get("root") or None, "render": fm.get("render", "scroll")}
 
 
 def _write_manifest(thread: str, man: dict) -> None:
     THREADS_DIR.mkdir(parents=True, exist_ok=True)
-    fm = ["---", "type: thread-manifest", f"thread: {thread}", f"include: {man['kind']}"]
-    if man.get("root"):
-        fm.append(f"root: {man['root']}")
-    fm.append("---\n")
-    body = "\n".join(man["ids"]) + ("\n" if man["ids"] else "")
-    _manifest_path(thread).write_text("\n".join(fm) + body, encoding="utf-8")
-
-
-def _remove_from_manifest(thread: str, cid: str) -> None:
-    man = _read_manifest(thread)
-    if man["kind"] == "list" and cid in man["ids"]:
-        man["ids"].remove(cid)
-        _write_manifest(thread, man)
+    fm = ["---", "type: thread-manifest", f"thread: {thread}",
+          f"root: {man.get('root') or ''}", f"render: {man.get('render', 'scroll')}", "---", ""]
+    _manifest_path(thread).write_text("\n".join(fm), encoding="utf-8")
 
 
 def _all_pool_cards() -> dict[str, Card]:
@@ -303,56 +340,48 @@ def _subtree_ids(root: str, cards: dict) -> set:
     return seen
 
 
-def _migrate_if_needed(thread: str) -> None:
-    """Lazily convert a legacy per-thread store (`records/<thread>/`) into the global pool + a
-    manifest, ONCE, on first touch. Idempotent; leaves `records/` in place as a backup."""
-    if _manifest_path(thread).exists():
-        return
-    old = RECORDS_ROOT / thread
-    if not old.exists():
-        return                                       # a brand-new thread — nothing to migrate
-    CARDS_DIR.mkdir(parents=True, exist_ok=True)
-    cards: dict[str, Card] = {}
-    for p in sorted(old.glob("*.md")):
-        dst = _card_path(p.stem)
-        if not dst.exists():                         # content-addressed — copy once, never clobber
-            dst.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
-        c = _load_card(p.stem)
-        if c:
-            cards[p.stem] = c
-    ordered = sorted(cards, key=lambda i: _sort_key(cards[i]))   # preserve chronological render
-    _write_manifest(thread, {"kind": "list", "root": None, "ids": ordered})
-
-
 def load_records(thread: str) -> dict[str, Card]:
-    """Resolve a thread's manifest against the global card pool -> {id: Card}. Lazily migrates a
-    legacy per-thread store on first touch. A thread with no manifest (and no legacy dir) is empty."""
-    _migrate_if_needed(thread)
+    """Resolve a thread (its manifest root) against the global pool -> {id: Card} = the subtree rooted
+    at `root`. A thread with no root (fresh/empty) is {}. Membership is derived live from the reply
+    graph — there's no stored id-list to drift (enc:v2)."""
     man = _read_manifest(thread)
-    if man["kind"] == "subtree" and man["root"]:
-        pool = _all_pool_cards()
-        return {i: pool[i] for i in _subtree_ids(man["root"], pool) if i in pool}
-    out: dict[str, Card] = {}
-    for cid in man["ids"]:
-        c = _load_card(cid)
-        if c:
-            out[cid] = c
-    return out
+    if not man["root"]:
+        return {}
+    pool = _all_pool_cards()
+    return {i: pool[i] for i in _subtree_ids(man["root"], pool) if i in pool}
 
 
 def write_record(card: Card, thread: str) -> pathlib.Path:
-    """Append a card to the global pool (content-addressed — written once, never clobbered) and
-    include its id in the thread's manifest. Append-only by convention."""
-    _migrate_if_needed(thread)
+    """Append a card to the global pool (content-addressed — written once). The thread includes it
+    automatically iff it descends from the thread root (derive model); the FIRST card into a rootless
+    thread bootstraps the root. On a dedup skip (the id already on disk), ASSERT the stored body
+    matches — "same id ⇒ same content" must RAISE on a real collision, never silently no-op (§4)."""
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     p = _card_path(card.id)
-    if not p.exists():
+    if p.exists():
+        existing = _load_card(card.id)
+        if existing and normalize(existing.body) != normalize(card.body):
+            raise SystemExit(f"COLLISION at {card.id}: a different body already occupies this id — "
+                             f"refusing to overwrite (enc:v2 write-equality assert)")
+    else:
         p.write_text(_card_text(card), encoding="utf-8")
     man = _read_manifest(thread)
-    if man["kind"] == "list" and card.id not in man["ids"]:
-        man["ids"].append(card.id)
+    if not man["root"]:
+        man["root"] = card.id                        # the first card bootstraps the thread root
         _write_manifest(thread, man)
     return p
+
+
+def _drop_pooled(thread: str, card: Card) -> None:
+    """Retract a pooled card — the interrupt-spam supersede path ONLY (cmd_capture). Deletes the file;
+    if it was the thread root, re-roots to the card's parent so the subtree stays connected (or clears
+    it, letting the replacement re-bootstrap the root). NOT a general delete verb — the store is
+    append-only; removal is a deliberate operator act (ARCH §6)."""
+    _card_path(card.id).unlink(missing_ok=True)
+    man = _read_manifest(thread)
+    if man.get("root") == card.id:
+        man["root"] = card.reply_to
+        _write_manifest(thread, man)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -444,12 +473,16 @@ def _view_unescape(body: str) -> str:
 def render_card(card: Card) -> str:
     """One card -> its callout post block + ^anchor (view grammar §3).
 
-    The body is HTML-escaped for the callout (outside code spans) so a bare
-    angle-bracket token can't open an HTML tag and collapse the box; `parse_view`
-    reverses it, so the rendered body still hashes to its id."""
-    head = f"> [!{card.author}] {card.author} - {card.captured_at} | [[{card.id}]]"
+    enc:v2 ids are full 64-hex, but the operator should SEE the 8-char prefix — so links use the
+    Obsidian alias form `[[<full64>|<short8>]]`: the full id is the (resolvable) link target and the
+    on-disk anchor, the short id is the rendered label. `parse_view` recovers the full id from before
+    the `|`. The body is HTML-escaped for the callout (outside code spans) so a bare angle-bracket
+    token can't open an HTML tag and collapse the box; `parse_view` reverses it, so the rendered body
+    still hashes (with reply_to) to its id."""
+    sid = short_id(card.id)
+    head = f"> [!{card.author}] {card.author} - {card.captured_at} | [[{card.id}|{sid}]]"
     if card.reply_to:
-        head += f" >> [[#^{card.reply_to}|{card.reply_to}]]"
+        head += f" >> [[#^{card.reply_to}|{short_id(card.reply_to)}]]"
     head += f" <br> {card.flair}"
     body = _view_escape(normalize(card.body).rstrip("\n"))
     body_lines = [(f"> {ln}" if ln else ">") for ln in body.split("\n")]
@@ -461,18 +494,27 @@ def render_tui(card: Card) -> str:
     callout and the raw record. The left rail `┃` is the TUI's `> `: strip it here
     and the body is the record verbatim (the Obsidian callout additionally HTML-
     escapes the body for safe rendering — a reversible projection; see render_card).
-    The footer carries the enc:v1 id as the receipt. This is the frame an agent's
-    reply is presented in, so what's said == what's stored, by construction."""
+    The footer carries the enc:v2 id (8-char display prefix) as the receipt pointer:
+    hash the body WITH its reply_to and it equals the full id this prefixes. This is the
+    frame an agent's reply is presented in, so what's said == what's stored, by construction."""
     rail = "┃"
-    head = f"┏━ [{card.author}] · {card.id}" + (f" ↳ {card.reply_to}" if card.reply_to else "")
+    sid = short_id(card.id)
+    head = f"┏━ [{card.author}] · {sid}" + (f" ↳ {short_id(card.reply_to)}" if card.reply_to else "")
     out = [head]
     if card.flair:
         out.append(f"{rail} {card.flair}")
     out.append(rail)
     for ln in normalize(card.body).rstrip("\n").split("\n"):
         out.append(f"{rail} {ln}" if ln else rail)
-    out.append(f"┗━ enc:v1 {card.id}")
+    out.append(f"┗━ enc:v2 {sid}")
     return "\n".join(out)
+
+
+def _nav_link(target_id: str) -> str:
+    """The thread's structural 'Jump to Bottom' header link: an Obsidian in-file block link to the
+    LATEST card's anchor — which sits directly above the staging input zone — wrapped in a [!nav]
+    callout that both view parsers (parse_view, fold_floating) skip, so it is never captured."""
+    return f"> [!nav] [[#^{target_id}|⤓ Jump to Bottom]]"
 
 
 def render_view(records: dict[str, Card], fm_block: str) -> str:
@@ -481,6 +523,8 @@ def render_view(records: dict[str, Card], fm_block: str) -> str:
     cards = sorted(records.values(), key=_sort_key)
     body = "\n\n".join(render_card(c) for c in cards)
     out = f"---\n{fm_block}\n---\n\n" if fm_block else ""
+    if cards:                                    # structural header nav -> the staging input at the
+        out += _nav_link(cards[-1].id) + "\n\n"  # bottom (the latest card's anchor sits just above it)
     out += body + "\n\n---\n"   # trailing reply-zone separator (card 3adb72d6)
     return out
 
@@ -519,6 +563,38 @@ def _split_posts(staging: str) -> list:
     return posts
 
 
+def _max_backtick_run(s: str) -> int:
+    """Length of the longest run of consecutive backticks in `s`."""
+    best = run = 0
+    for ch in s:
+        run = run + 1 if ch == "`" else 0
+        best = max(best, run)
+    return best
+
+
+def _fence(content: str) -> str:
+    """A code-fence long enough to wrap `content` verbatim even when it embeds ``` runs —
+    CommonMark closes a fence only with a run of >= its own length, so a 3-tick block inside an
+    excerpt rides safely inside a >=4-tick scaffold. Used by `pull` (emit) and gel (read)."""
+    return "`" * max(3, _max_backtick_run(content) + 1)
+
+
+def _fence_open(line: str) -> int:
+    """The fence length if `line` opens a code fence (a leading run of >=3 backticks, info string
+    allowed), else 0 — so an inner, shorter fence inside an excerpt can't close the outer one."""
+    s = line.strip()
+    n = 0
+    while n < len(s) and s[n] == "`":
+        n += 1
+    return n if n >= 3 else 0
+
+
+def _fence_close(line: str, fence_len: int) -> bool:
+    """True if `line` closes a fence of length `fence_len` — a bare run of >= that many backticks."""
+    s = line.strip()
+    return bool(s) and set(s) == {"`"} and len(s) >= fence_len
+
+
 def _surviving_drafts(view: pathlib.Path) -> str:
     """Fenced ``` blocks anywhere in the staging area (across every `---`-separated post) that
     a re-render must KEEP — `pull` scaffolds the operator is still annotating against. Prose is
@@ -527,9 +603,9 @@ def _surviving_drafts(view: pathlib.Path) -> str:
     lines = _staging(view.read_text(encoding="utf-8"))[1].split("\n")
     out, i, n = [], 0, len(lines)
     while i < n:
-        if lines[i].lstrip().startswith("```"):
+        if (fl := _fence_open(lines[i])):
             blk = [lines[i]]; i += 1
-            while i < n and not lines[i].lstrip().startswith("```"):
+            while i < n and not _fence_close(lines[i], fl):
                 blk.append(lines[i]); i += 1
             if i < n:
                 blk.append(lines[i]); i += 1                # closing fence
@@ -544,7 +620,7 @@ def _reapply_highlights(rendered: str, hl_by_card: dict) -> str:
     code-highlight in backticks (within its own card) so it survives until `pull`
     extracts it — a reconcile must not consume a highlight the operator hasn't pulled."""
     for cid, excerpts in hl_by_card.items():
-        a, z = rendered.find(f"[[{cid}]]"), rendered.find(f"\n^{cid}\n")
+        a, z = rendered.find(f"[[{cid}"), rendered.find(f"\n^{cid}\n")   # link is [[full|short]]
         if a == -1 or z == -1:
             continue
         a = rendered.find("\n", a) + 1            # skip the header line — re-wrap in the BODY only
@@ -590,13 +666,21 @@ def _render_preserving(view: pathlib.Path, records: dict, fm_block: str) -> str:
 #  view parser  (the CDC capture: read changes that entered through the view)
 # ════════════════════════════════════════════════════════════════════════════
 
+# The id group captures the FULL 64-hex (before any `|short` alias); the optional `|...` is the
+# human display prefix and is discarded on parse. Same for the parent. So parse-back recovers the
+# full structural id the card_id(body, parent) recompute needs.
 _HEADER_RE = re.compile(
     r"^> \[!(?P<author>[\w-]+)\]\s+[\w-]+\s+-\s+(?P<ts>.+?)\s+\|\s+"
-    r"\[\[(?P<id>[0-9a-f]+)\]\]"
-    r"(?:\s+>>\s+\[\[#\^(?P<parent>[0-9a-f]+)\|[0-9a-f]+\]\])?"
+    r"\[\[(?P<id>[0-9a-f]+)(?:\|[0-9a-f]+)?\]\]"
+    r"(?:\s+>>\s+\[\[#\^(?P<parent>[0-9a-f]+)(?:\|[0-9a-f]+)?\]\])?"
     r"\s+<br>\s+(?P<flair>.*)$"
 )
 _ANCHOR_RE = re.compile(r"^\^([0-9a-f]+)\s*$")
+# The rendered "Jump to Bottom" header link (render_view emits it; both view parsers skip it). Matched
+# by its EXACT structural form — the `[[#^<hex>|⤓` block-link — NOT a loose `[!nav]` prefix, so an
+# operator who happens to start a line with `[!nav]` keeps it as content (append-only: NEVER silently
+# drop operator input). render_view's nav always matches this; nothing an operator hand-types does.
+_NAV_RE = re.compile(r"^>\s*\[!nav\]\s*\[\[#\^[0-9a-f]+\|⤓")
 
 
 @dataclass
@@ -611,7 +695,7 @@ class ParsedCard:
 
     @property
     def computed_id(self) -> str:
-        return card_id(self.body)
+        return card_id(self.body, self.reply_to)
 
     @property
     def mutated(self) -> bool:
@@ -632,6 +716,9 @@ def parse_view(text: str) -> tuple[str, list[ParsedCard], list[str]]:
 
     while i < n:
         line = lines[i]
+        if _NAV_RE.match(line):              # structural header nav — not a card, not floating
+            i += 1
+            continue
         hm = _HEADER_RE.match(line)
         if hm:
             i += 1
@@ -755,17 +842,17 @@ def _clean_fm_block(view: pathlib.Path) -> str:
 
 
 def cmd_id(args) -> int:
-    print(card_id(sys.stdin.read()))
+    """Print the enc:v2 id of a body on stdin. The id commits to the parent, so pass `--reply-to <id>`
+    for a reply's address; omit it for a root (parent = ROOT sentinel)."""
+    print(card_id(sys.stdin.read(), getattr(args, "reply_to", None)))
     return 0
 
 
-# Content-MATCH folding (compare-only; never stored, never hashed). An editor or a copy/paste
-# round-trip silently rewrites punctuation — straight quotes -> curly, hyphen-minus -> a
-# typographic/non-breaking hyphen, space -> NBSP, `*emph*` -> `_emph_`. Those bytes diverge from
-# the straight-ASCII source card, so a hand-pasted excerpt stops substring-matching its origin and
-# `locate`/`gel` silently miss. We fold them away for MATCHING only. Deliberately NOT in
-# `normalize`/`card_id`: folding there would re-address every existing card (the enc:v2 one-way
-# door). Locate tolerance is free — the id scheme is untouched.
+# Content-MATCH folding (compare-only; never stored, never hashed). enc:v2's `normalize` already
+# folds quotes / hyphens / NBSP INTO the id, so a smart-quoted paste hashes to its source. `_cmp_fold`
+# is the looser MATCH form `locate`/`gel` use: it also folds markdown emphasis `_`<->`*` — which
+# `normalize` deliberately does NOT (emphasis is intentional content, so it stays strict in the id).
+# So the id is strict (only the "same character" punctuation folds); locate is lenient (emphasis too).
 _CMP_FOLD = str.maketrans({
     "“": '"', "”": '"', "„": '"', "‟": '"',          # “ ” „ ‟  -> "
     "‘": "'", "’": "'", "‚": "'", "‛": "'",          # ‘ ’ ‚ ‛  -> '
@@ -783,16 +870,14 @@ def _cmp_fold(s: str) -> str:
 
 def _locate(excerpt: str) -> tuple:
     """Resolve a bare EXCERPT to the source card id(s) by CONTENT — the out-of-band counterpart to
-    `annotate`/`pull`, which know an excerpt's source by its POSITION in the view. Two tiers, cheapest
-    first: if the excerpt IS a whole card body, its hash is the id (O(1), exact — no scan); otherwise a
-    partial span can't be hashed to an id, so substring-scan the pool. Match after the same per-line
-    rstrip the id's `normalize` does, so copy-paste trailing whitespace doesn't defeat it. Returns
-    (kind, ids): kind in {'empty','exact','contains'}; ids = [] when nothing matches, >1 when ambiguous."""
+    `annotate`/`pull`, which know an excerpt's source by its POSITION in the view. Substring-scan only:
+    under enc:v2 an id commits to its parent, so a bare body (no parent in hand) can't be hashed to an
+    id — the v1 O(1) `exact` tier is structurally gone. Match after the same per-line rstrip the id's
+    `normalize` does, through the lenient `_cmp_fold`, so copy-paste whitespace / smart punctuation /
+    emphasis don't defeat it. Returns (kind, ids): kind in {'empty','contains'}; ids = [] when nothing
+    matches, >1 when ambiguous (a shared span — listed, never guessed)."""
     if not excerpt.strip():
         return ("empty", [])
-    cid = card_id(excerpt)                                   # exact: a full body hashes straight to its id
-    if _card_path(cid).exists():
-        return ("exact", [cid])
     needle = _cmp_fold("\n".join(l.rstrip() for l in excerpt.strip().split("\n")))
     hits = [c.id for c in sorted(_all_pool_cards().values(), key=_sort_key)
             if needle in _cmp_fold("\n".join(l.rstrip() for l in c.body.split("\n")))]
@@ -800,8 +885,8 @@ def _locate(excerpt: str) -> tuple:
 
 
 def cmd_locate(args) -> int:
-    """Print the id(s) of the pooled card(s) a stdin excerpt comes from — `exact` (the excerpt is a
-    whole body) or `contains` (a substring). Determine-the-hash for an excerpt handed over out of band."""
+    """Print the id(s) of the pooled card(s) a stdin excerpt is `contains`ed in (substring-scan).
+    Determine-the-source for an excerpt handed over out of band; ambiguous spans list every match."""
     kind, ids = _locate(sys.stdin.read())
     if kind == "empty":
         print("locate: empty excerpt", file=sys.stderr)
@@ -814,17 +899,6 @@ def cmd_locate(args) -> int:
     if len(ids) > 1:
         print(f"locate: {len(ids)} cards match — ambiguous; quote with more context", file=sys.stderr)
     return 0 if len(ids) == 1 else 2
-
-
-def _edge_digest(pool: dict) -> str:
-    """A deterministic fingerprint of the reply graph's EDGE SET — sha256 of the sorted
-    `child->parent` pairs. Each card BODY is already sealed by its own id; the EDGES live in
-    mutable frontmatter (`reply_to`), so a rewrite is otherwise silent and `validate` still
-    passes (it only checks edges resolve, not that they're authentic). Record this digest and
-    any later edge rewrite changes it: tamper-EVIDENT, with NO re-addressing — the reversible
-    'soft seal' that precedes the enc:v2 hard seal (`id = hash(body, reply_to)`)."""
-    edges = sorted(f"{c.id}->{c.reply_to}" for c in pool.values() if c.reply_to)
-    return hashlib.sha256("\n".join(edges).encode("utf-8")).hexdigest()[:16]
 
 
 def _find_cycles(pool: dict) -> list:
@@ -844,31 +918,44 @@ def _find_cycles(pool: dict) -> list:
 
 
 def cmd_validate(args) -> int:
-    """Re-hash every card in the global pool + check every reply_to edge resolves to a card in
-    the pool (edges are global now). Migrates any legacy per-thread store first. Vault-wide."""
-    for old in (sorted(RECORDS_ROOT.glob("*")) if RECORDS_ROOT.exists() else []):
-        if old.is_dir():
-            _migrate_if_needed(old.name)
+    """Re-hash every pooled card under enc:v2 (id = hash(body, reply_to)) + check every reply_to edge
+    resolves + assert the reply graph is ACYCLIC (a hard failure — a cycle is unmintable by honest
+    hashing and breaks the Merkle-DAG). The edge is IN the id now, so a rewritten edge is just a hash
+    mismatch — no separate soft-seal digest. Self-polices a v1 stray: an 8-hex v1 id can't reproduce as
+    a 64-hex hash(body, parent), so it lands in bad_hash → INVALID on sight. Vault-wide."""
     pool = _all_pool_cards()
     n = len(pool)
+    enc = (ENC_STAMP.read_text(encoding="utf-8").strip() if ENC_STAMP.exists() else "(unstamped)")
     bad_hash = [(cid, c.computed_id) for cid, c in pool.items() if c.computed_id != cid]
     bad_ref = [(cid, c.reply_to) for cid, c in pool.items() if c.reply_to and c.reply_to not in pool]
     threads = sorted(p.stem for p in THREADS_DIR.glob("*.md")) if THREADS_DIR.exists() else []
+    print(f"pool enc:           {enc}")
     print(f"threads:            {len(threads)}")
     print(f"records:            {n}")
-    print(f"hash integrity:     {n - len(bad_hash)}/{n} reproduce their id")
+    print(f"hash integrity:     {n - len(bad_hash)}/{n} reproduce their id (enc:v2: hash(body, reply_to))")
     for cid, got in bad_hash:
-        print(f"  ✗ {cid}: body hashes to {got}")
+        print(f"  ✗ {short_id(cid)}: (body, reply_to) hashes to {short_id(got)} — corrupt or a v1 stray")
     print(f"referential:        {n - len(bad_ref)}/{n} reply_to edges resolve")
     for cid, tgt in bad_ref:
-        print(f"  ✗ {cid}: reply_to -> {tgt} (missing from pool)")
+        print(f"  ✗ {short_id(cid)}: reply_to -> {short_id(tgt)} (missing from pool)")
     cyclic = _find_cycles(pool)
     n_edges = sum(1 for c in pool.values() if c.reply_to)
     print(f"acyclic:            {'yes' if not cyclic else 'NO'} ({n_edges} edges form a DAG)")
     for cid in cyclic:
-        print(f"  ✗ {cid}: reply_to chain forms a cycle")
-    print(f"edge digest:        {_edge_digest(pool)}  (soft seal — record to detect edge rewrites)")
-    ok = not bad_hash and not bad_ref and not cyclic
+        print(f"  ✗ {short_id(cid)}: reply_to chain forms a cycle")
+    # causal order: captured_at must not DECREASE along a reply edge — a reply cannot predate the
+    # card it answers. Append-only creation guarantees this; a delete+restore (or any out-of-band
+    # re-stamp) that dates a parent AFTER its existing child violates it and silently mis-orders the
+    # chronological render — and head/debt selection, which are max-by-captured_at. Flag it loud.
+    noncausal = sorted(
+        (c.id, c.reply_to) for c in pool.values()
+        if c.reply_to in pool and _sort_key(c) < _sort_key(pool[c.reply_to])
+    )
+    print(f"causal order:       {n - len(noncausal)}/{n} replies dated at-or-after their parent")
+    for cid, tgt in noncausal:
+        print(f"  ✗ {short_id(cid)}: captured_at {pool[cid].captured_at!r} precedes parent "
+              f"{short_id(tgt)} {pool[tgt].captured_at!r}")
+    ok = not bad_hash and not bad_ref and not cyclic and not noncausal
     print("VALID ✓" if ok else "INVALID ✗")
     return 0 if ok else 1
 
@@ -939,54 +1026,36 @@ def _new_thread_view(name: str) -> pathlib.Path:
 
 
 def cmd_fork(args) -> int:
-    """Promote a reply-subtree into its own thread: write a manifest `include: subtree, root: <id>`,
+    """Promote a reply-subtree into its own thread: write a derive manifest `{root: <id>, render}`,
     resolved LIVE from the global pool — no cards are copied, the fork is a lens on the graph. The
     root's own `reply_to` (its parent in the source thread) is kept; it just dangles in the fork's
     view, marking where the branch split off. New replies in the fork are still global cards, and
     any descendant of the root appears here automatically — the privileged fork 4chan can't do."""
     root = getattr(args, "root", None)
-    if not root or not re.fullmatch(r"[0-9a-f]{8}", root):
-        print("fork: --from must be a card id (8 hex)", file=sys.stderr)
+    if not root or not re.fullmatch(ID_RE, root):
+        print("fork: --from must be a full 64-hex card id", file=sys.stderr)
         return 1
     if root not in _all_pool_cards():
-        print(f"fork: no card {root} in the pool", file=sys.stderr)
+        print(f"fork: no card {short_id(root)} in the pool", file=sys.stderr)
         return 1
-    name = getattr(args, "as_", None) or f"fork-{root}"
+    name = getattr(args, "as_", None) or f"fork-{short_id(root)}"
     if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
         print(f"fork: bad thread name {name!r}", file=sys.stderr)
         return 1
     if _manifest_path(name).exists():
         print(f"fork: thread '{name}' already exists", file=sys.stderr)
         return 1
-    _write_manifest(name, {"kind": "subtree", "root": root, "ids": []})
+    _write_manifest(name, {"root": root, "render": "scroll"})
     view = _new_thread_view(name)
-    print(f"forked -> {view.relative_to(ROOT)}  (subtree of {root}: {len(load_records(name))} cards)")
+    print(f"forked -> {view.relative_to(ROOT)}  (subtree of {short_id(root)}: {len(load_records(name))} cards)")
     return 0
 
 
-def cmd_clone(args) -> int:
-    """Clone a thread: copy its manifest to a new name. Two manifests over ONE card pool — they
-    share all history and then diverge as each gets new cards. No cards are copied; this is the
-    'two people on the same thread' answer — independent lists, never fighting over bytes."""
-    src = getattr(args, "src", None)
-    name = getattr(args, "as_", None)
-    if not src or not name:
-        print("clone: need --from <thread> and --as <name>", file=sys.stderr)
-        return 1
-    _migrate_if_needed(src)
-    if not _manifest_path(src).exists():
-        print(f"clone: no thread '{src}'", file=sys.stderr)
-        return 1
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
-        print(f"clone: bad thread name {name!r}", file=sys.stderr)
-        return 1
-    if _manifest_path(name).exists():
-        print(f"clone: thread '{name}' already exists", file=sys.stderr)
-        return 1
-    _write_manifest(name, _read_manifest(src))
-    view = _new_thread_view(name)
-    print(f"cloned {src} -> {view.relative_to(ROOT)}  ({len(load_records(name))} cards, independent manifest)")
-    return 0
+# NOTE: `clone` is GONE under enc:v2. v1's clone copied a thread's id-LIST so two names could diverge
+# independently. Under the derive model a thread IS its subtree (membership is derived, not stored), so
+# a second name over the same root can never diverge — the semantic doesn't exist. Two people on one
+# thread just both add cards to the same subtree. `fork` (a new ref rooted at a branch) is the one
+# meaningful derive operation; clone was removed rather than kept as a confusing no-op alias.
 
 
 def cmd_diff(args) -> int:
@@ -1011,7 +1080,7 @@ def _file_new_cards(cs: dict, records: dict, view: pathlib.Path) -> int:
             write_record(Card(id=nc["computed_id"], author=nc["author"],
                               captured_at=_next_ts(records, wrote),   # never leak captured_at='' into a record
                               reply_to=nc["reply_to"], flair=nc["flair"],
-                              body=nc["body"], thread=f"[[{view.stem}]]"), rdir)
+                              body=nc["body"]), rdir)
             wrote += 1
     return wrote
 
@@ -1167,21 +1236,31 @@ def cmd_record(args) -> int:
     This is how every card is born, in BOTH lanes: the operator/agent pipes the
     body through here; nobody ever transcribes a card by hand again."""
     body = sys.stdin.read()
-    cid = card_id(body)                                   # the content address
     view = _resolve_view(getattr(args, "view", None))
     rdir = records_dir(view.stem)
     records = _reconcile_view(view)                       # fold staged drafts FIRST — never append over them
     sid = getattr(args, "session", None)
+    # Resolve the parent FIRST — under enc:v2 the id commits to reply_to, so it must be final before we
+    # can name the card. Explicit --reply-to wins; else --reply-head binds to THIS terminal's lane tip.
+    # The v1 global-head GUESS is dead: a guessed parent is a wrong id, so an unresolvable --reply-head
+    # REFUSES to mint (surfacing the head as debt) rather than misattribute a reply (§4).
     reply_to = args.reply_to
     if reply_to is None and getattr(args, "reply_head", False):
-        lane = _session_lane(sid, view.stem)             # the tip of THIS terminal's lane…
-        reply_to = lane if (lane and lane in records) else (   # …not the global head, under concurrency
-            max(records.values(), key=_sort_key).id if records else None)  # fallback: single-terminal head
-    if cid not in records:                               # idempotent: same body = same card
+        lane = _session_lane(sid, view.stem)
+        if lane and lane in records:
+            reply_to = lane
+        elif records:
+            print("record: --reply-head but no lane tip for this session — refusing to guess a parent "
+                  "(enc:v2: a guessed parent is a wrong id). Pass --reply-to <id> explicitly.",
+                  file=sys.stderr)
+            return 1
+        # else: empty thread → reply_to stays None → this card is the root (a real, explicit ROOT).
+    cid = card_id(body, reply_to)                         # NOW the address is final (parent-committed)
+    if cid not in records:                               # idempotent: same body + same parent = same card
         write_record(Card(id=cid, author=args.author,
                           captured_at=args.ts or _next_ts(records),
                           reply_to=reply_to, flair=args.flair or "",
-                          body=body, thread=f"[[{view.stem}]]"), rdir)
+                          body=body), rdir)
         records = load_records(rdir)
     _session_advance(sid, view.stem, cid)                # this card is now my lane's tip
     # re-render so every VIEW (Obsidian + dashboard) is a projection of records
@@ -1191,8 +1270,8 @@ def cmd_record(args) -> int:
         DASHBOARD.write_text(render_dashboard(), encoding="utf-8")
     # emit the TUI callout — the response frame; its body == the record body
     sys.stdout.write(render_tui(records[cid]) + "\n")
-    sys.stderr.write(f"[recorded {cid} · author={args.author} · "
-                     f"reply_to={reply_to or '-'} · {view.stem}]\n")
+    sys.stderr.write(f"[recorded {short_id(cid)} · author={args.author} · "
+                     f"reply_to={short_id(reply_to) if reply_to else '-'} · {view.stem}]\n")
     return 0
 
 
@@ -1205,9 +1284,9 @@ def _compose_post(post: str, records: dict) -> tuple:
     `fold`."""
     lines, body, refs, i, n = post.split("\n"), [], [], 0, len(post.split("\n"))
     while i < n:
-        if lines[i].lstrip().startswith("```"):
+        if (fl := _fence_open(lines[i])):
             opener, fence, i = lines[i], [], i + 1
-            while i < n and not lines[i].lstrip().startswith("```"):
+            while i < n and not _fence_close(lines[i], fl):
                 fence.append(lines[i]); i += 1
             closer = lines[i] if i < n else None               # None if the operator left it unterminated
             if closer is not None:
@@ -1218,11 +1297,11 @@ def _compose_post(post: str, records: dict) -> tuple:
             #       LOCATE its source by content. Unique hit → quote it; ambiguous (>1) or
             #       none → keep verbatim, never guess (the contract's locate rule).
             ref = fence[0].strip() if fence else ""
-            if re.fullmatch(r"[0-9a-f]{8}", ref) and ref in records:
+            if re.fullmatch(ID_RE, ref) and ref in records:
                 quote_ref, excerpt = ref, fence[1:]
             else:
                 kind, ids = _locate("\n".join(fence))
-                quote_ref = (ids[0] if kind in ("exact", "contains")
+                quote_ref = (ids[0] if kind == "contains"
                              and len(ids) == 1 and ids[0] in records else None)
                 excerpt = fence
             if quote_ref is not None:
@@ -1230,7 +1309,7 @@ def _compose_post(post: str, records: dict) -> tuple:
                 author = records[quote_ref].author
                 if body and body[-1].strip():
                     body.append("")                            # blank line before the callout
-                body.append(f"> [!{author}] {author} | [[{quote_ref}]]")   # quote in the author's card style
+                body.append(f"> [!{author}] {author} | [[{quote_ref}|{short_id(quote_ref)}]]")   # author's card style
                 body += [f"> {e}" if e else ">" for e in "\n".join(excerpt).strip("\n").split("\n")]
                 body.append("")                                # blank line after the callout
             else:                                              # not a scaffold — keep VERBATIM, never
@@ -1259,11 +1338,10 @@ def gel_scaffolds(view: pathlib.Path, records: dict) -> list:
         if not ref:
             kept.append(post)                                  # plain prose -> leave for fold
             continue
-        cid = card_id(composed)
+        cid = card_id(composed, ref)
         if cid not in records:
             write_record(Card(id=cid, author="fish", captured_at=_next_ts(records, len(made)),
-                              reply_to=ref, flair="✎ *quote-reply*", body=composed,
-                              thread=f"[[{view.stem}]]"), rdir)
+                              reply_to=ref, flair="✎ *quote-reply*", body=composed), rdir)
         made.append((cid, ref))
     if not made:
         return []
@@ -1276,9 +1354,13 @@ def fold_floating(view: pathlib.Path, records: dict) -> list:
     """Deterministic capture: floating operator text -> fish cards (no LLM, the
     author is known). A block typed beneath a card's `^caret` replies to THAT card —
     so you can answer any card in place and branch it into its own thread (fan-out),
-    not just the head. A block BELOW the last `---` (the staging zone) posts as a new
-    root (the operator's 'nonreply'). Each blank-separated block = one card. Writes
-    records only; the caller re-renders. Returns [(id, reply_to), ...]."""
+    not just the head. A block BELOW the last `---` (the staging zone) attaches to the
+    head (the enc:v2 derive model keeps a thread one connected subtree; the first post of
+    an empty thread becomes the root). Everything in one zone — from an upstream ^caret (or the
+    staging boundary) down to the next callout — is ONE card; internal blank lines are kept as
+    paragraph breaks. Only a bare `---` barline (or a `pull` code-scaffold, or the next callout)
+    splits a zone into multiple cards. Writes records only; the caller re-renders.
+    Returns [(id, reply_to), ...]."""
     _, _, body_text = _split_frontmatter(view.read_text(encoding="utf-8"))
     lines = body_text.split("\n")
     n, i = len(lines), 0
@@ -1287,12 +1369,19 @@ def fold_floating(view: pathlib.Path, records: dict) -> list:
 
     def flush():
         nonlocal cur, cur_start
-        if cur:
-            blocks.append((cur_start, "\n".join(cur), last_anchor))   # the caret it sits beneath
-            cur, cur_start = [], None
+        block = cur
+        while block and not block[0].strip():        # trim leading blank lines
+            block.pop(0)
+        while block and not block[-1].strip():        # trim trailing blanks (INTERNAL ones are kept)
+            block.pop()
+        if block:
+            blocks.append((cur_start, "\n".join(block), last_anchor))   # the caret it sits beneath
+        cur, cur_start = [], None
 
     while i < n:
         line = lines[i]
+        if _NAV_RE.match(line):                    # structural header nav — never fold it
+            i += 1; continue
         if _HEADER_RE.match(line):                 # skip a whole card
             flush(); i += 1
             while i < n and lines[i].startswith(">"): i += 1
@@ -1301,9 +1390,9 @@ def fold_floating(view: pathlib.Path, records: dict) -> list:
                 last_anchor = am.group(1); i += 1  # now beneath this card's caret
             continue
         s = line.strip()
-        if s.startswith("```"):                    # a ``` codeblock (e.g. a `pull` scaffold)
+        if (fl := _fence_open(line)):              # a ``` codeblock (e.g. a `pull` scaffold)
             flush(); i += 1                        # is NOT prose to fold — skip it intact
-            while i < n and not lines[i].lstrip().startswith("```"): i += 1
+            while i < n and not _fence_close(lines[i], fl): i += 1
             i += 1                                 # consume the closing fence
             continue
         if s == "---":
@@ -1311,8 +1400,10 @@ def fold_floating(view: pathlib.Path, records: dict) -> list:
             if sep_idx == -1:                      # staging boundary = the FIRST bare --- after the
                 sep_idx = i                        # cards; later --- (bar breaks) only separate blocks
             i += 1; continue
-        if s == "":
-            flush(); i += 1; continue
+        if s == "":                                # a blank line is INTERNAL whitespace of the current
+            if cur:                                # post — a multi-paragraph reply stays ONE card; it
+                cur.append(line)                   # never splits (only `---`/a callout/a scaffold does)
+            i += 1; continue
         if cur_start is None:
             cur_start = i
         cur.append(line); i += 1
@@ -1324,15 +1415,16 @@ def fold_floating(view: pathlib.Path, records: dict) -> list:
     head = max(records.values(), key=_sort_key).id if records else None
     made = []
     for idx, (start, body, anchor) in enumerate(blocks):
-        # below the last --- (staging zone) -> new root; otherwise reply to the card
-        # whose ^caret this block sits beneath (branch it), or the head if beneath none.
-        reply_to = None if (sep_idx != -1 and start > sep_idx) else (anchor or head)
+        # A block beneath a card's ^caret replies to THAT card (branch/fan-out). A staging-zone block
+        # (below the last ---) attaches to the head — under the enc:v2 derive model a thread is one
+        # subtree, so a post stays connected to the tree (a truly disconnected root would be a separate
+        # thread). The very first post of an empty thread has head=None → reply_to=None → it is the root.
+        reply_to = (anchor or head)
         flair = "⚛️ *folded reply*" if reply_to else "⚛️ *folded post*"
-        cid = card_id(body)
+        cid = card_id(body, reply_to)
         if cid not in records:
             write_record(Card(id=cid, author="fish", captured_at=_next_ts(records, idx),
-                              reply_to=reply_to, flair=flair, body=body,
-                              thread=f"[[{view.stem}]]"), rdir)
+                              reply_to=reply_to, flair=flair, body=body), rdir)
         made.append((cid, reply_to))
     return made
 
@@ -1411,11 +1503,64 @@ def _annotation_card_body(host_id: str, ann: dict) -> str:
     return "\n".join(lines)
 
 
+def _highlight_ticks(record_body: str, view_body: str):
+    """If `view_body` is `record_body` with only backtick chars inserted, return the sorted
+    record-offsets of those inserted ticks (each a highlight boundary); else None — the body was
+    also edited, so tick-pairing can't be trusted (the caller falls back to a per-line scan).
+    Greedy: a ` in the view that matches the record's own ` is taken as content, not a marker, so
+    an excerpt that itself CONTAINS a ``` codeblock (non-tick boundaries) pairs on the wrap ticks
+    alone — the internal fence matches record-to-view and is never mistaken for a boundary."""
+    i = j = 0
+    R, V, ticks = len(record_body), len(view_body), []
+    while j < V:
+        if i < R and view_body[j] == record_body[i]:
+            i += 1; j += 1
+        elif view_body[j] == "`":
+            ticks.append(i); j += 1
+        else:
+            return None
+    return ticks if i == R else None
+
+
 def _extract_highlights(record_body: str, view_body: str) -> list[dict]:
-    """Pure: find spans the operator code-highlighted — text wrapped in `…` in the
-    view that was NOT code in the record (the inline-highlight gesture, like bolding).
-    One dict per highlight — {excerpt, section}. A whole-line `…` span is a sigil note,
-    not a highlight (handled by _extract_annotations), so it is skipped here."""
+    """Pure: spans the operator code-highlighted — wrapped in a `…` pair in the view but not code
+    in the record (the inline-highlight gesture, like bolding). One dict per highlight,
+    {excerpt, section}. Driven by the DIFF (record vs view), NOT a backtick regex, so an excerpt
+    that itself holds inline ticks or a whole ``` codeblock is captured VERBATIM — the wrap ticks
+    are the only inserted bytes, and everything between a pair is the excerpt, newlines and fences
+    and all. A whole-line single-line span is a sigil note (left to _extract_annotations). Falls
+    back to a per-line scan when the view also carries non-highlight edits (tick-pairing then
+    being ambiguous)."""
+    ticks = _highlight_ticks(record_body, view_body)
+    if ticks is None or len(ticks) < 2:
+        return _extract_highlights_inline(record_body, view_body)
+    rlines = record_body.split("\n")
+    starts, off = [], 0
+    for ln in rlines:
+        starts.append(off); off += len(ln) + 1
+    def _line_of(offset):
+        return max((k for k, s in enumerate(starts) if s <= offset), default=0)
+    def _section(offset):
+        for h in range(_line_of(offset), -1, -1):
+            hm = _HEADING_RE.match(rlines[h].strip())
+            if hm:
+                return hm.group(1).strip()
+        return ""
+    out, seen = [], set()
+    for a, b in zip(ticks[0::2], ticks[1::2]):           # pair (open, close); excerpt = record[a:b]
+        excerpt = record_body[a:b].strip("\n")
+        if not excerpt.strip() or excerpt in seen:
+            continue
+        if "\n" not in excerpt and rlines[_line_of(a)].strip() == excerpt.strip():
+            continue                                     # whole-line span = sigil note, not a highlight
+        seen.add(excerpt)
+        out.append({"excerpt": excerpt, "section": _section(a)})
+    return out
+
+
+def _extract_highlights_inline(record_body: str, view_body: str) -> list[dict]:
+    """Fallback for a view that mixes highlights with other edits: the per-line inline-code scan.
+    Single-line spans only — a multi-line / inner-tick span needs the diff path above."""
     rec_spans = set(_INLINE_CODE_RE.findall(record_body))
     vlines = view_body.split("\n")
     out, seen = [], set()
@@ -1439,12 +1584,15 @@ def _extract_highlights(record_body: str, view_body: str) -> list[dict]:
 
 
 def _highlight_card_body(host_id: str, hl: dict) -> str:
-    """A code-highlighted excerpt -> a fish 'quote' card body: the highlighted span as
-    a nested `[!quote]` callout that replies to the host. No note — the highlight is the
-    operator pointing at exactly what they are quoting; the reply is the agent's job on
-    the next `bump`."""
+    """A code-highlighted excerpt -> a fish 'quote' card body: the highlighted span as a nested
+    `[!quote]` callout that replies to the host (each line rail-prefixed, so a multi-line excerpt
+    or an embedded codeblock nests intact). No note — the highlight is the operator pointing at
+    exactly what they are quoting; the reply is the agent's job on the next `bump`."""
     title = f"{host_id} · {hl['section']}" if hl["section"] else host_id
-    return f"> [!quote] {title}\n> {hl['excerpt']}"
+    lines = [f"> [!quote] {title}"]
+    for ln in hl["excerpt"].split("\n"):
+        lines.append(f"> {ln}" if ln else ">")
+    return "\n".join(lines)
 
 
 def harvest_annotations(view: pathlib.Path, records: dict) -> list:
@@ -1459,11 +1607,10 @@ def harvest_annotations(view: pathlib.Path, records: dict) -> list:
 
     def emit(body: str, flair: str) -> None:
         nonlocal idx
-        cid = card_id(body)
+        cid = card_id(body, host_id)
         if cid not in records and cid not in {m[0] for m in made}:
             write_record(Card(id=cid, author="fish", captured_at=_next_ts(records, idx),
-                              reply_to=host_id, flair=flair, body=body,
-                              thread=f"[[{view.stem}]]"), rdir)
+                              reply_to=host_id, flair=flair, body=body), rdir)
             idx += 1
         made.append((cid, host_id))
 
@@ -1508,11 +1655,13 @@ def _is_resend(old: str, new: str) -> bool:
 
 
 def cmd_capture(args) -> int:
-    """Capture an operator prompt as a fish card, collapsing the interrupt-spam
-    prefix chain: while the head is a fish card that this body is a resend of,
-    supersede it (delete + replace with the longer/latest). A claude reply
-    between two fish cards breaks the chain, so only consecutive un-answered
-    resends collapse. Exact dups are no-ops (content-addressing)."""
+    """Capture an operator prompt as a fish card. Binds to THIS terminal's lane tip (the turn it
+    follows), falling back to the global head when the session is unknown. Collapses the Ctrl+C
+    interrupt-spam prefix chain — consecutive unanswered fish resends supersede each other; an exact
+    resubmit of the tip is a no-op. enc:v2: the id commits to the RESOLVED parent (resolved BEFORE the
+    body is hashed), so the same prompt in two terminals (two lanes → two parents) is two distinct
+    cards, not a silent cross-lane dedup that drops one operator's input — the bug v2 was built to kill.
+    Capture never refuses (a prompt is never dropped); only `record` refuses to guess a reply parent."""
     body = sys.stdin.read()
     if not body.strip():
         return 0
@@ -1522,21 +1671,27 @@ def cmd_capture(args) -> int:
         return 0
     view = _resolve_view(getattr(args, "view", None))
     rdir = records_dir(view.stem)
-    cid = card_id(body)
     records = load_records(rdir)
-    if cid in records:
-        sys.stderr.write(f"[capture: exact dup {cid}, skipped]\n")
-        return 0
     sid = getattr(args, "session", None)
     lane = _session_lane(sid, view.stem)              # this terminal's last card here (None if unknown)
+
+    def _tip():                                       # my lane tip if known, else the global head
+        return (records.get(lane) if (sid and lane) else
+                (max(records.values(), key=_sort_key) if records else None))
+
+    tip = _tip()
+    if tip and tip.body.strip() == body.strip():      # exact resubmit of the tip -> no-op
+        sys.stderr.write(f"[capture: exact dup {short_id(tip.id)}, skipped]\n")
+        return 0
+
     superseded = []
-    # Collapse the Ctrl+C interrupt-spam chain — but with a session, ONLY within MY lane,
-    # never another terminal's card that merely happens to be the global head (that would
-    # unlink a live prompt). Without a session, fall back to the original global-head walk.
+    # Collapse the Ctrl+C interrupt-spam chain — with a session ONLY within MY lane (never another
+    # terminal's card that happens to be the head — that would unlink a live prompt); else the head walk.
     while records:
-        prev = records.get(lane) if sid else max(records.values(), key=_sort_key)
-        if prev and prev.author == "fish" and _is_resend(prev.body, body):
-            _remove_from_manifest(rdir, prev.id)      # drop the superseded resend from the thread
+        prev = _tip()
+        if (prev and prev.author == "fish" and prev.body.strip() != body.strip()
+                and _is_resend(prev.body, body)):
+            _drop_pooled(rdir, prev)                  # retract the superseded resend from the pool
             superseded.append(prev.id)
             if sid:
                 lane = prev.reply_to                  # reconnect up my lane to the grandparent
@@ -1546,16 +1701,17 @@ def cmd_capture(args) -> int:
     records = _reconcile_view(view)                   # fold staged drafts before carding the prompt
     reply_to = (lane if (sid and lane and lane in records)   # bind to MY lane tip, not the global head
                 else (max(records.values(), key=_sort_key).id if records else None))  # fallback: head
-    write_record(Card(id=cid, author="fish", captured_at=_next_ts(records),
-                      reply_to=reply_to, flair="", body=body,
-                      thread=f"[[{view.stem}]]"), rdir)
-    records = load_records(rdir)
+    cid = card_id(body, reply_to)                     # enc:v2: address committed to the resolved parent
+    if cid not in records:
+        write_record(Card(id=cid, author="fish", captured_at=_next_ts(records),
+                          reply_to=reply_to, flair="", body=body), rdir)
+        records = load_records(rdir)
     _session_advance(sid, view.stem, cid)             # this prompt is now my lane's tip
     if _is_thread(view):
         _render_keep_scaffolds(view, records)
         _refresh_dirty(view)
         DASHBOARD.write_text(render_dashboard(), encoding="utf-8")
-    sys.stderr.write(f"[captured {cid}; superseded {superseded or 'none'}]\n")
+    sys.stderr.write(f"[captured {short_id(cid)}; superseded {superseded or 'none'}]\n")
     return 0
 
 
@@ -1626,7 +1782,10 @@ def pull_highlights(view: pathlib.Path) -> dict:
         return {"found": 0, "appended": []}
 
     above = render_view(records, _clean_fm_block(view))   # scrub: cards restored, ends with the barline
-    appended = "".join(f"\n```\n{cid}\n{exc}\n```\n" for cid, exc in new)
+    def _scaffold(cid, exc):                              # variable-length fence so an excerpt that itself
+        f = _fence(f"{cid}\n{exc}")                       # embeds a ``` block rides a longer (>=4) fence
+        return f"\n{f}\n{cid}\n{exc}\n{f}\n"
+    appended = "".join(_scaffold(cid, exc) for cid, exc in new)
     view.write_text(above + staging + appended, encoding="utf-8")   # keep every section, append at the end
     return {"found": found, "appended": new}
 
@@ -1776,9 +1935,17 @@ def cmd_render_tui(args) -> int:
         print(f"{view.stem}: no records yet", file=sys.stderr)
         return 1
     if getattr(args, "id", None):
-        card = records.get(args.id)
+        want = args.id
+        card = records.get(want)
+        if card is None:                                  # accept the 8-char display prefix too
+            matches = [c for cid, c in records.items() if cid.startswith(want)]
+            if len(matches) == 1:
+                card = matches[0]
+            elif len(matches) > 1:
+                print(f"render-tui: id prefix {want!r} is ambiguous ({len(matches)} cards)", file=sys.stderr)
+                return 1
         if card is None:
-            print(f"no record {args.id}", file=sys.stderr)
+            print(f"no record {want}", file=sys.stderr)
             return 1
     else:
         card = max(records.values(), key=_sort_key)      # --last
@@ -1821,10 +1988,11 @@ def cmd_bump(args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="stream-cards backend (enc:v1)")
+    ap = argparse.ArgumentParser(description="stream-cards backend (enc:v2 — Merkle-DAG)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("id", help="enc:v1 id of a body read from stdin")
-    sub.add_parser("locate", help="resolve a stdin excerpt to its source card id(s) (exact body, or substring)")
+    pid = sub.add_parser("id", help="enc:v2 id of a body on stdin (pass --reply-to for a reply's address)")
+    pid.add_argument("--reply-to", dest="reply_to", default=None, help="parent id (omit for a root)")
+    sub.add_parser("locate", help="resolve a stdin excerpt to its source card id(s) (substring-scan)")
     sub.add_parser("validate", help="re-hash records + referential integrity")
     sub.add_parser("scan", help="vault-wide dirty pass (Brain): flag every thread + dirty.json")
     pr = sub.add_parser("render", help="records -> view (clears the dirty flag)")
@@ -1865,19 +2033,16 @@ def main() -> int:
     pdb = sub.add_parser("dashboard", help="compile .stream state -> DASHBOARD.md")
     pdb.add_argument("--write", action="store_true")
     sub.add_parser("bump", help="the heartbeat: reconcile all dirty threads + print the reply-debt")
-    pfk = sub.add_parser("fork", help="new thread = the reply-subtree rooted at a card (subtree manifest)")
-    pfk.add_argument("--from", dest="root", help="card id to root the subtree at")
-    pfk.add_argument("--as", dest="as_", help="new thread name (default: fork-<id>)")
-    pcl = sub.add_parser("clone", help="copy a thread's manifest to a new name (shared pool, divergent)")
-    pcl.add_argument("--from", dest="src", help="source thread name")
-    pcl.add_argument("--as", dest="as_", help="new thread name")
+    pfk = sub.add_parser("fork", help="new thread = the reply-subtree rooted at a card (derive manifest)")
+    pfk.add_argument("--from", dest="root", help="full card id to root the subtree at")
+    pfk.add_argument("--as", dest="as_", help="new thread name (default: fork-<short>)")
     args = ap.parse_args()
     return {"id": cmd_id, "validate": cmd_validate, "scan": cmd_scan,
             "render": cmd_render, "diff": cmd_diff, "extract": cmd_extract,
             "run": cmd_run, "record": cmd_record, "render-tui": cmd_render_tui,
             "fold": cmd_fold, "dashboard": cmd_dashboard,
             "capture": cmd_capture, "annotate": cmd_annotate, "bump": cmd_bump,
-            "pull": cmd_pull, "fork": cmd_fork, "clone": cmd_clone,
+            "pull": cmd_pull, "fork": cmd_fork,
             "locate": cmd_locate}[args.cmd](args)
 
 

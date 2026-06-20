@@ -269,16 +269,18 @@ def _drift() -> list[pathlib.Path]:
 
 
 def _orphan_refs() -> list[tuple[str, str]]:
-    """Inclusion integrity: a `list` manifest entry whose card is missing from the pool. Such an
-    id is silently dropped from the rendered view (load_records skips it), so it never surfaces as
-    drift — the one new-layout fault the render-check can't see. (subtree manifests resolve live,
-    so they can't dangle.)"""
+    """Derivation integrity: a manifest whose `root` card is missing from the pool. A subtree
+    manifest derives its membership live as subtree(root); if the root itself isn't pooled the
+    thread resolves to nothing (the view renders empty) — the one fault the render-check can't
+    tell apart from a legitimately empty thread. A `root: None` manifest is an intentionally empty
+    thread, not an orphan."""
     pool = stream._all_pool_cards()
     out = []
     if stream.THREADS_DIR.exists():
         for m in sorted(stream.THREADS_DIR.glob("*.md")):
-            man = stream._read_manifest(m.stem)
-            out += [(m.stem, cid) for cid in man["ids"] if cid not in pool]
+            root = stream._read_manifest(m.stem).get("root")
+            if root and root not in pool:
+                out.append((m.stem, root))
     return out
 
 
@@ -313,8 +315,8 @@ def main() -> int:
 
     section("the spine — does it actually work")
     gp = subprocess.run([PY, str(SYS / "test_golden.py")], capture_output=True, text=True, cwd=str(ROOT))
-    req("golden tests (enc:v1 / round-trip / pool / fork)", gp.returncode == 0,
-        "code regression — do NOT edit normalize(); see test output")
+    req("golden tests (enc:v2 / round-trip / dedup-split / fork)", gp.returncode == 0,
+        "code regression — do NOT edit normalize()/card_id(); see test output")
     vp = _run(["validate"])
     req("validate (pool hash + referential integrity)", vp.returncode == 0,
         "a card body was changed and no longer hashes to its id — inspect _system/data/cards/")

@@ -6,14 +6,16 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
 ## The one model you must hold
 
 - **Cards are the truth.** `_system/data/cards/<id>.md` — immutable, one file per card in a single
-  **global pool**, `id = sha256(normalize(body))[:8]`. The id IS the content. No thread partition:
-  the same body in two threads is ONE pooled card, cited twice.
-- **Threads are manifests.** `_system/data/threads/<thread>.md` — a thread is *second-order*: an
-  **inclusion** (an ordered id-list, or `include: subtree, root: <id>`) over the pool, not a pile of
-  bytes. The view `notes/<thread>.md` (flat, no subfolders) is a *rendering* of the manifest against
-  the pool — derived, regenerable, never authoritative. You author *in* the view; `run` reconciles it
-  back. (Legacy `_system/records/<thread>/` auto-migrates to pool+manifest on first touch and is kept
-  only as a backup — the pool is authoritative.)
+  **global pool**, `id = sha256("enc:v2\n" + sha256(normalize(body)) + "\n" + (reply_to or "ROOT"))`
+  — a full 64-hex **Merkle-DAG** node name (the parent is part of the address; an 8-char prefix is
+  display only). The id IS the content *in its causal context*: same body + same parent → one card;
+  same body + **different** parent → a different card. No thread partition: the same (body, parent) in
+  two threads is ONE pooled card, cited twice.
+- **Threads are manifests.** `_system/data/threads/<thread>.md` — a thread is *second-order*:
+  `{root, render}`, its membership **derived** as `subtree(root)` (root + all `reply_to`-descendants),
+  resolved live from the pool. No id-list. The view `notes/<thread>.md` (flat, no subfolders) is a
+  *rendering* of the manifest against the pool — derived, regenerable, never authoritative. You author
+  *in* the view; `run` reconciles it back.
 
 ## Iron rules (these are about correctness, not taste)
 
@@ -26,16 +28,17 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
 2. **Mint your reply with `record`, then re-emit its frame — no `ctrl+o`.** Your turn-final
    reply IS a card, and `record` is the *only* path to it. Compose the body as clean markdown and
    pipe it through `record`; it content-addresses the bytes, writes the immutable record,
-   re-renders the view, and prints the `render_tui` callout — the `┏━ … ┃ … ┗━ enc:v1 <id>` frame:
+   re-renders the view, and prints the `render_tui` callout — the `┏━ … ┃ … ┗━ enc:v2 <short>` frame
+   (`<short>` is the 8-char display prefix of the full 64-hex id):
    ```
    printf '%s' "your reply body" | python3 _system/stream.py record --author claude-tui --reply-head
    ```
    Then **stream that exact frame as your message** — the `┃` rail binding every line — so the
    operator reads the bound callout directly, with no `ctrl+o`. The body between the rails == the
-   stored record == `<id>`, by construction; the footer hash is the receipt — strip the rails, hash
-   the body, it equals `<id>`, or it isn't this card. **Divergence is forbidden** — the frame you
-   stream MUST be the verbatim, untruncated stdout of `record`/`render-tui`, byte-for-byte; strip its
-   rails and the body hashes to the footer `<id>`, or you have forged the receipt. Three failures, all
+   stored record, by construction; the footer hash is the receipt — strip the rails, hash the body
+   **with its `reply_to`** (`enc:v2`), and you get the full id this `<short>` prefixes, or it isn't
+   this card. **Divergence is forbidden** — the frame you stream MUST be the verbatim, untruncated
+   stdout of `record`/`render-tui`, byte-for-byte, or you have forged the receipt. Three failures, all
    forbidden: (a) leaving the frame only in the collapsed Bash result (the `ctrl+o` trap — re-emit it
    as your message); (b) typing a separate, embellished prose twin (the card body must be exactly what
    sits inside the bars); (c) **truncating the frame** — never pipe `record`/`render-tui` through
@@ -49,9 +52,10 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
    `--view notes/<t>.md` / `--author <name>`. Optional `--flair "◈ …"` sets the italic header
    glance-line — keep it to **3–6 words**, never a summary (the body carries the detail). Never
    transcribe a card by hand.
-3. **The store is append-only.** New cards only. To remove something, that's the operator's
-   call (drop its id from the thread's manifest — or delete the pooled card to retire it everywhere —
-   then `render --write` the view).
+3. **The store is append-only.** New cards only. Membership is *derived* (a thread is `subtree(root)`),
+   so there's no per-thread id to drop — to remove something, that's the operator's call: delete the
+   pooled card to retire it everywhere (its descendants then dangle until re-pointed), then
+   `render --write` the view.
 4. **No autonomous loops.** You reply when asked. The `Summon` button is the only API path
    and it fires on an explicit human click. Do not wire up anything that replies on a timer
    or on file-change without the operator saying yes to that specific loop. (Mirroring an
@@ -67,15 +71,14 @@ thread store. Read `_system/ARCHITECTURE.md` once if you haven't; it's short.
 | `annotate --view <t>` | harvest in-body `` `…` `` sigil notes from edited cards into fish reply cards quoting the excerpt; restores the hosts (deterministic capture, no LLM) |
 | `pull --view <t>` | extract code-highlighted excerpts from the cards into ``` codeblocks below the `---` (scrub above / append below); idempotent — re-running does nothing |
 | `gel` (inside `run`/`fold`) | each `---`-separated staging post embedding a `pull` scaffold → one fish quote-reply card; the codeblock becomes a nested callout in the quoted author's style, prose kept |
-| `fork --from <id> --as <t>` | new thread = the reply-subtree rooted at a card — writes a `subtree` manifest, resolved live from the pool; no cards copied |
-| `clone --from <t> --as <t2>` | copy a thread's manifest to a new name — two manifests over one pool, diverging independently as each gets new cards |
-| `validate` | re-hash every card in the pool; check every reply link resolves (globally); assert the reply graph is **acyclic** (a DAG); print the **edge digest** — the soft-seal fingerprint of the `child→parent` set, record it to detect a silent edge rewrite |
+| `fork --from <id> --as <t>` | new thread = the reply-subtree rooted at a card — writes a `{root, render}` derive manifest, resolved live from the pool; no cards copied. (`clone` is **gone** under enc:v2 — a thread IS its subtree, so a second name can't diverge.) |
+| `validate` | re-hash every card under `enc:v2` (`hash(body, reply_to)`); check every reply link resolves (globally); assert the reply graph is **acyclic** (hard fail). The edge is *in* the id, so a rewrite is just a hash mismatch — no separate edge digest. Self-polices a v1 stray |
 | `render --view <t> --write` | rebuild the cards from manifest + the pool; the staging draft below `---` is **carried verbatim** (only in-view card-body edits are discarded) |
 | `render … --write --hard` | the flask/**Restore** button: discriminate every local change, then dissolve in-view edits AND the staging draft, rebuilding canonical — the deliberate wash (overrides the carry; diffs first, never silent) |
 | `scan` | vault-wide: flag every thread that has drifted, write `.stream/dirty.json` |
 | `bump` | the heartbeat: reconcile every dirty thread (no scrub) + print the reply-debt queue — **every fish leaf** (one owed head per open lane; concurrent terminals branch the thread) — with each head's text |
-| `id` | print the enc:v1 id of a body on stdin |
-| `locate` | resolve a stdin **excerpt** → its source card id(s): a whole body hashes `exact` (O(1)); a partial span is found by pool substring-scan (`contains`, **punctuation-tolerant** — curly quotes, NB-hyphen, `*`/`_` emphasis folded for matching only, never hashed); a shared span lists every match (ambiguous, never guessed) |
+| `id` | print the `enc:v2` id of a body on stdin (`--reply-to <id>` for a reply's address; omit for a root) |
+| `locate` | resolve a stdin **excerpt** → its source card id(s) by pool **substring-scan** (`contains`, **punctuation/emphasis-tolerant** via `_cmp_fold` — for matching only). The v1 O(1) `exact` tier is gone: an id commits to its parent, so a bare body can't be hashed to an id. A shared span lists every match (ambiguous, never guessed) |
 
 `DASHBOARD.md` (vault root) is the live status view — daemon, dirty threads, reply debt.
 

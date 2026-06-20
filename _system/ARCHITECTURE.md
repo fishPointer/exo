@@ -9,52 +9,60 @@ threads that a team appends to from multiple devices, asynchronously, with no se
 
 ## 1. One idea
 
-> Cards are immutable atoms in one global pool; a card's name is the hash of its body. A thread is
-> *second-order* — a manifest that **includes** cards (by id-list, or a query) in an order. The
+> Cards are immutable atoms in one global pool; a card's name is the hash of its body **and its
+> parent** — so the store is a true **Merkle-DAG** (`enc:v2`). A thread is *second-order* — a
+> manifest that **derives** its membership from the graph (the subtree rooted at one card). The
 > thread you read is a *rendering* of that manifest over the pool: derived, throwaway, rebuildable.
 
 Everything below falls out of that.
 
 ```
-_system/data/cards/<id>.md       ← THE POOL. immutable atoms. id = hash(body). global, no partition.
-_system/data/threads/<name>.md   ← MANIFEST. inclusion (id-list, or subtree(root)) + order. IS the thread.
+_system/data/cards/<id>.md       ← THE POOL. immutable atoms. id = hash(body, reply_to). global, no partition.
+_system/data/threads/<name>.md   ← MANIFEST. derive: {root, render}. membership = subtree(root). IS the thread.
 notes/<thread>.md                ← VIEW. a rendering of the manifest over the pool. derived. disposable.
+_system/data/ENC                 ← the pool's encoding stamp (`v2`); validate reads it.
 ```
 
 You read and type in the **view**. The tooling reconciles it back into pooled **cards** and the
 thread's **manifest**. Cards never lie; a view rebuilds from manifest + pool byte-for-byte. A card is
-free — cited by any number of manifests; a thread is a lens, not a box.
+free — any thread whose root is its ancestor renders it; a thread is a lens, not a box.
 
 ---
 
-## 2. The load-bearing contract: `enc:v1`
+## 2. The load-bearing contract: `enc:v2`
 
 ```
-id   = sha256(normalize(body))[:8]
-normalize(body):  NFC the unicode → rstrip each line → join with "\n"
-                  → strip outer newlines → append exactly one "\n"
+body_hash = sha256(normalize(body)).hexdigest()                 # 64 hex, fixed width
+id        = sha256("enc:v2\n" + body_hash + "\n" + (reply_to or "ROOT")).hexdigest()   # 64 hex — the address
+normalize(body):  NFC the unicode → fold editor-substituted punctuation to ASCII
+                  (curly quotes/apostrophes/primes, NB-hyphen, NBSP — NOT emphasis *↔_)
+                  → rstrip each line → join with "\n" → strip outer newlines → append one "\n"
 ```
 
-The id **is** the content. Two consequences, both deliberate:
+The id **is** the content *in its causal context* — a **Merkle-DAG node name** (git's commit-hashes-
+its-parent, applied to a thread). It is a **hash-of-hashes**: the body is committed via its own
+fixed-width 64-hex hash, so body bytes never sit adjacent to the parent field — no body content can
+shift the boundary or forge a parent (naive `hash(body+parent)` is injectable; rejected). The full
+256-bit (64-hex) id is stored everywhere; an **8-char prefix** is human-display only (git's short-hash
+trick — `[[<full64>|<short8>]]` in views, `enc:v2 <short8>` in the rail). Four consequences, all
+deliberate:
 
-- **Idempotence.** The same body always yields the same id. Recording it twice is a no-op.
-  This is why concurrent, offline, multi-device writes don't conflict (§5).
-- **Tamper-evidence.** If a body ever stops hashing to its filename, the card is corrupt and
-  `validate` says so. The hash is a receipt: *what you see is what's stored, or it isn't the
-  same card.*
+- **Idempotence, parent-scoped.** Same body + **same parent** → same id; recording it twice is a
+  no-op. Same body + **different parent** → a *different* card (the dedup-softening axiom: "yes" under
+  two questions is two cards). The id-resolution must therefore fix the parent *before* hashing.
+- **Tamper-evidence covers the edge.** Under v1 a `reply_to` rewrite was silent (the edge wasn't
+  hashed) and needed a separate "soft seal" digest. Now the edge is **in** the id: rewrite it and the
+  card no longer hashes to its filename — `validate` says `INVALID` on sight. No soft seal needed.
+- **Acyclic by construction.** You can't compute an id inside a cycle (A's id needs B's needs A's), so
+  honest minting can't make one; `validate` still asserts it (the store is hand-editable plaintext).
+- **Punctuation-stable.** `normalize` folds the bytes an editor silently swaps (curly quotes, NB-
+  hyphen, NBSP) **into** the address, so a smart-quoted paste hashes identically to its ASCII source.
+  Emphasis `*`↔`_` is left strict (intentional content); `locate`'s `_cmp_fold` still folds it for
+  *matching* only — id strict, locate lenient.
 
-`normalize` must stay byte-stable across editors and OSes or the whole scheme rots.
-`_system/test_golden.py` pins it. **Do not touch `normalize` without re-running the golden
-tests.**
-
-Because `normalize` *is* the address, an editor that smart-punctuates a copied span (straight
-quotes → curly, hyphen → non-breaking hyphen, `*emph*` → `_emph_`) yields **different bytes → a
-different id**, so a hand-pasted excerpt won't dedupe or `locate` against its straight-ASCII
-source. The fix that does **not** re-address the pool is a **compare-only** fold inside `locate`
-(`_cmp_fold`): smart punctuation is folded for *matching* only, never hashed. Folding it into
-`normalize` itself would re-address every existing card — that is the **`enc:v2`** change
-(`id = hash(body, reply_to)` + a punctuation-stable normalize), a deliberate one-way door held
-behind operator sign-off (§6), never a quiet bump.
+`normalize` + the `card_id` preimage must stay byte-stable across editors and OSes or the whole scheme
+rots. `_system/test_golden.py` pins both (fixed point, punc-stability, the verbatim preimage, root-
+domain, injection). **Do not touch `normalize` or `card_id` without re-running the golden tests.**
 
 ---
 
@@ -94,15 +102,14 @@ button click (a new nonce in `.stream/trigger.json`) — no autonomous loop. Set
 | `annotate` | harvest in-body <code>`…`</code> sigil notes from edited cards into `fish` reply cards that quote the annotated excerpt as a nested callout, then restore the hosts. Deterministic capture, like `fold` — no LLM. |
 | `pull` | extract code-highlighted excerpts from the cards into ``` codeblocks below the `---` barline — drafting scaffolds to compose against. Scrub above / append below; idempotent; scaffolds survive *incidental* reconciles (record/capture/bump), and gel on `run`/`fold`. |
 | `gel` | (not a CLI verb — runs inside `run`/`fold`) each `---`-separated staging post that embeds a `pull` scaffold folds into one `fish` quote-reply card: the codeblock becomes a nested callout in the quoted card's *author* style, the surrounding prose is kept, reply_to = the quoted card. |
-| `fork` | new thread = the reply-subtree rooted at a card — writes a `subtree` manifest resolved *live* from the pool. No cards copied; any future descendant of the root appears automatically. The privileged fork. |
-| `clone` | copy a thread's manifest to a new name — two manifests over one pool, sharing history then diverging as each gets new cards. The "two people on one thread" answer. |
-| `validate` | re-hash every card in the pool; check every reply link resolves (globally) and every manifest id is pooled; assert the `reply_to` graph is **acyclic**; print the **edge digest** (soft-seal fingerprint of the `child→parent` set — a recorded digest makes a later edge rewrite detectable, with no re-addressing). |
+| `fork` | new thread = the reply-subtree rooted at a card — writes a `{root, render}` **derive** manifest resolved *live* from the pool. No cards copied; any future descendant of the root appears automatically. The privileged fork. |
+| `validate` | re-hash every card in the pool under `enc:v2` (`hash(body, reply_to)`); check every reply link resolves (globally); assert the `reply_to` graph is **acyclic** (a hard failure). The edge is *in* the id now, so a rewrite is just a hash mismatch — no separate edge digest. Self-polices a v1 stray (8-hex can't reproduce as 64-hex). |
 | `render --write` | rebuild the cards from manifest + the pool (the pool wins; in-view card-body edits discarded) — **carries the staging draft below `---` verbatim** (`_render_preserving`, §6). |
 | `render --write --hard` | the flask/**Restore** button: discriminate every local change, then dissolve in-view edits AND the staging draft, rebuilding canonical. The deliberate wash — the one path that overrides the carry, and only on the operator's click. |
 | `scan` | vault-wide: flag every drifted thread, write `.stream/dirty.json`. |
 | `bump` | the heartbeat: reconcile every dirty thread (no scrub), refresh the dashboard, print the reply-debt queue — **every fish leaf**, one owed head per open lane — + each head's text. The agent's one-command reflex. |
-| `id` | print the enc:v1 id of a body on stdin. |
-| `locate` | reverse lookup — a stdin excerpt → its source card id(s). Whole body → `exact` (the hash, O(1)); partial span → `contains` (pool substring-scan, since a partial can't be hashed to an id). The *content*-located counterpart to annotate/pull's *position* lookup; ambiguous spans list every match. |
+| `id` | print the `enc:v2` id of a body on stdin (pass `--reply-to <id>` for a reply's address; omit for a root). |
+| `locate` | reverse lookup — a stdin excerpt → its source card id(s) by **substring-scan** (the v1 O(1) `exact` tier is gone: an id commits to its parent, so a bare body can't be hashed to an id). The *content*-located counterpart to annotate/pull's *position* lookup; ambiguous spans list every match. |
 | `dashboard` | compile `.stream/` state → `DASHBOARD.md`. |
 
 ### Why a sentinel file between plugin and daemon (Layer 2 ↔ 1)
@@ -132,9 +139,10 @@ the reply's source is the agent itself, so the agent pipes it straight in — no
   system reminders, slash-command echoes) is **not the operator**, so it's skipped.
 - **the reply → one `claude-tui` card, minted at source** — the agent pipes its reply body
   through `record` (capture-*at-source*, like the daemon's `claude -p | record`): one clean body
-  in, a content-addressed card written, and the `render_tui` callout — `┏━ … ┃ … ┗━ enc:v1 <id>` —
+  in, a content-addressed card written, and the `render_tui` callout — `┏━ … ┃ … ┗━ enc:v2 <short>` —
   printed. The agent then **re-emits that exact frame as its terminal message**, so the operator
-  reads the bound callout directly (no `ctrl+o`) and the footer hash is the receipt. **Divergence is
+  reads the bound callout directly (no `ctrl+o`) and the footer hash is the receipt (hash the body
+  *with its `reply_to`* → the full id this prefixes). **Divergence is
   forbidden** (CLAUDE.md rule #2): the re-emitted frame must be the *verbatim, untruncated* stdout —
   never piped through `tail`/`head`/`sed`. Truncate it and you'll reconstruct the frame from memory
   and abridge it into a forgery whose body no longer hashes to the footer `<id>` (this happened, and
@@ -158,6 +166,19 @@ operator points at what they want addressed by **code-highlighting** a span (`` 
 like bold); `annotate` lifts that span into a `[!quote]` card, and the next bump answers it. The
 procedure is the `/bump` skill; the rule is in CLAUDE.md.
 
+### Authoring standards (what the agent writes, not how the store works)
+
+Two house rules shape the *prose* that enters cards. **Orientation-first voice** — ground the reader
+in plain, lived language before ramping into the rigorous systems-engineering voice (never open in the
+deep end). And the **`/latex suite`** equation format (the suneater "formulary" lineage, named
+agnostically): *no naked equations* — every `$$…$$` relation is paired with a four-column terms table
+(`Symbol | Name | Units | Typical Value`) that is a superset of every symbol in it. An entry is authored
+as a nested `[!latex]` callout, so it renders as a boxed formulary panel *inside* whatever card carries
+it — a **render class, not a persona**: producing one is a capability every author has (modular, not
+fused), and the box is pure presentation (the `latex` CSS class) over a body that hashes like any other.
+Both ship in the core distribution as skills under `.claude/skills/` (`latex-suite/SKILL.md` carries the
+full contract + a worked entry).
+
 ---
 
 ## 4. Cards pool globally; threads are manifests
@@ -166,29 +187,27 @@ procedure is the `/bump` skill; the rule is in CLAUDE.md.
 **same body in two threads is ONE pooled card**, cited by both threads' manifests — content-addressing
 finishing its job (one body → one id → one file), where the old layout kept two copies in two dirs.
 
-A thread is a **manifest**, `_system/data/threads/<name>.md` — frontmatter `include: list | subtree`
-(+ `root:` for subtree) over an ordered set of card-ids:
+A thread is a **manifest**, `_system/data/threads/<name>.md` — frontmatter `{root: <id>, render:
+scroll|head}`. Membership is **derived, never stored**: a thread = `subtree(root)` = `root` + all its
+transitive `reply_to`-descendants, resolved *live* from the global graph. There is **no id-list** — that
+denormalized copy (which could disagree with the pool) is deleted. `fork --from <id> --as <name>`
+writes a new ref rooted at any card: promote a branch into its own thread without copying. `render:` is
+the doc-tier seam (only `scroll` implemented) — `a doc is a thread rendered at its head`.
 
-- **`list`** — an explicit, ordered id-set. The default; equals the old behaviour, now made *data*
-  instead of a folder. New cards append their id.
-- **`subtree`** — `root: <id>`; the inclusion is `root` + all its `reply_to`-descendants, resolved
-  *live* from the global graph. This is `fork`: promote any branch into its own thread without copying.
+`load_records(thread)` resolves the manifest root → the subtree from the pool; `write_record(card,
+thread)` appends the card to the pool (written once) and the FIRST card into a rootless thread
+bootstraps the root. `records_dir(thread)` returns the thread *name*, not a directory. Replies
+(`reply_to`) are a single **global** graph and resolve across the pool, not within a partition.
 
-`load_records(thread)` resolves the manifest → the pool; `write_record(card, thread)` appends the card
-to the pool (written once) and adds its id to the manifest. `records_dir(thread)` now returns the thread
-*name*, not a directory. Replies (`reply_to`) are a single **global** graph and resolve across the pool,
-not within a partition.
+Why derive: a thread can't drift from the pool (there's no second copy to disagree), and the model is
+clean — a thread IS a subtree. The cost is the v1 `clone` "two id-lists diverge independently" semantic
+**ceases to exist** (a second name over the same root can never diverge), so `clone` was **dropped**;
+two people on one thread just both add cards to the same subtree. `test_golden.py` [3] pins the dedup
+split (same body+parent → one card; same body+different parent → two) and [9] pins fork (subtree,
+no re-addressing).
 
-Why this shape: a thread becomes diffable and queryable like a card (diff the inclusion; `clone` = copy
-it; a query *is* an inclusion); and the old partition — the one place the design refused to let the
-global hash be global — is *deleted*, not maintained. `test_golden.py` [3] pins the dedup (one pooled
-card, two manifests cite it) and [9] pins fork (subtree) + clone (independent divergence).
-
-**Migration is lazy and lossless.** A legacy `_system/records/<thread>/` converts to pool + manifest on
-first touch (`_migrate_if_needed`), idempotent, and the old `records/` tree is **left in place as a
-backup** — not authoritative. The doctor's `manifests resolve to pooled cards` check guards the one new
-fault: a `list` id with no pooled card is silently dropped by `load_records`, so it never shows as
-render-drift.
+(There is no legacy migration: the burn-and-rebuild cutover to `enc:v2` left a single clean scheme —
+`_migrate_if_needed`, the `records/` auto-convert, and every "migrate first" guard were deleted.)
 
 ---
 
@@ -202,10 +221,10 @@ Why it doesn't corrupt under concurrent editing:
 - **Two people add cards offline.** Different bodies → different ids → different files in the pool.
   On sync they merge as two new files. No conflict. Same body → same id → same file → sync sees
   identical content → still no conflict.
-- **Manifests merge by union.** A thread's manifest is an ordered id-list; two devices appending
-  different cards diverge into a set-union of ids, each a real pooled card — so the thread re-renders
-  cleanly from the merged manifest. (Coordinating the brief *draft* window two people might edit at
-  once is advisory **presence**, a pending concurrency layer — not a lock.)
+- **Membership merges by the graph.** A thread's manifest is just `{root, render}`; two devices each
+  add new cards (different bodies/parents → different ids → different pool files, no conflict), and the
+  thread's subtree(root) re-derives to include both — nothing to merge in the manifest itself. (The
+  brief *draft* window two people might edit at once is advisory **presence**, a pending layer — not a lock.)
 - **A view file conflicts** (both edited `main.md`). The view is *derived*, so the conflict
   doesn't matter: any re-render rebuilds the card region identically from the merged pool + manifest.
   You never lose data to a view conflict, because the view was never the data — and a *plain* re-render
@@ -231,7 +250,7 @@ make one person's button click fire on everyone's machine.
     (above the staging `---`, derived — rebuilt from the pool, in-view edits discarded) and the
     STAGING region (below it — the operator's uncommitted draft). Every re-render regenerates the
     cards but carries the staging **verbatim** (`_render_preserving`), so a plain regenerate — a CLI
-    `render --write`, a fork/clone, a sync-triggered re-render on another device — can never clobber a
+    `render --write`, a fork, a sync-triggered re-render on another device — can never clobber a
     draft. Drift detection compares the card region only; the staging is never drift. The one path that
     *does* dissolve the staging is the flask/**Restore** button (`render --hard` / `_render_hard`), and
     only because the operator deliberately asked: it diffs the local changes, then washes the edits and
@@ -247,12 +266,13 @@ make one person's button click fire on everyone's machine.
 - **`normalize` drift** (an editor that rewrites line endings or unicode form) would change
   ids. The golden tests catch it; `alwaysUpdateLinks: false` in `.obsidian/app.json` stops
   Obsidian from rewriting `[[wikilinks]]` inside cards.
-- **No deletion verb.** Removal is a deliberate manual act: drop a card's id from a thread's manifest
-  to remove it *there*, or delete the pooled card to retire it everywhere. The store is append-only on
-  purpose.
-- **A manifest id with no pooled card** is silently dropped from the view by `load_records`, so it
-  can't surface as render-drift — the doctor checks `manifests resolve to pooled cards` directly.
-  (`subtree` manifests resolve live and can't dangle.)
+- **No deletion verb.** Removal is a deliberate manual act: delete the pooled card to retire it
+  everywhere (its descendants then dangle until re-pointed). Membership is derived, so there is no
+  per-thread id to drop. The store is append-only on purpose. (One internal exception: `_drop_pooled`,
+  the interrupt-spam supersede + the summon-placeholder swap — not a general verb.)
+- **Manifests resolve live and can't dangle** (membership is `subtree(root)` from the pool). The one
+  edge: deleting a non-leaf pooled card leaves its descendants with a `reply_to` that no longer
+  resolves — `validate`'s `referential` check flags it.
 - **Summon is single-shot and manual.** There is no autonomous reply loop and adding one
   requires explicit operator sign-off (it's a standing rule, not an oversight).
 - **A reply the agent never `record`s isn't carded.** That's the cost of capture-at-source, and
@@ -267,28 +287,32 @@ make one person's button click fire on everyone's machine.
 - **Concurrent terminals branch one thread (handled).** A reply used to bind to the single
   global-latest card, so N terminals collapsed into one near-linear chain. Fixed with a **per-terminal
   lane pointer** (`.stream/sessions/<sid>.json`, keyed by the Claude session id): `record --reply-head`
-  and capture bind to *this* terminal's lane tip, falling back to the global head only when the session
-  is unknown (pure-CLI / single-terminal unchanged). Reply-debt then lists **every fish leaf**, one owed
-  head per open lane. A brand-new terminal's *first* card still falls back to the global head (no lane
-  tip yet) — a `SessionStart` seed would close that, left as a deliberate follow-up.
-- **The edge graph is mutable; the nodes aren't (soft-sealed).** A card *body* is tamper-evident (it
-  hashes to its id); a `reply_to` *edge* lives in frontmatter, so a rewrite is silent — `validate` only
-  checked that edges *resolve*. The reversible **soft seal** closes most of that gap: `validate` now
-  asserts the graph is **acyclic** and prints an **edge digest** (sha256 of the `child→parent` set), so
-  a recorded digest makes a later rewrite *detectable* with no re-addressing. The **hard seal** —
-  `enc:v2`, `id = hash(body, reply_to)`, a true Merkle-DAG where the parent is part of the address — is a
-  one-way door (re-addressing cascades to every descendant), so it stays behind operator sign-off and
-  three open questions (repair boundary / dedup axiom / threat tier): develop up to it, never flip it
-  silently.
+  and capture bind to *this* terminal's lane tip. Under `enc:v2` the parent is **in the id**, so a
+  *guessed* parent is a *wrong id*: `record --reply-head` with no resolvable lane tip **refuses to mint**
+  (surfaces the head as debt) rather than misattribute a reply. `capture` never refuses (a prompt is
+  never dropped) and falls back to the head — safe now, because the (body, parent) address means the
+  same prompt in two lanes is two distinct cards, not a silent cross-lane dedup. Reply-debt lists
+  **every fish leaf**, one owed head per open lane. (A `SessionStart` lane-seed for a brand-new
+  terminal's first card remains a deliberate follow-up; the refuse-to-mint path covers the gap safely.)
+- **The edge is now IN the id (the hard seal — `enc:v2` shipped).** `id = hash(body, reply_to)`, a true
+  Merkle-DAG: a card's name commits to its parent (git's commit-hashes-its-parent). A `reply_to`
+  rewrite is no longer silent — the card stops hashing to its filename, so `validate` flags it. The v1
+  "soft seal" (a separate edge-digest in `validate`) is therefore **gone** — redundant once the edge is
+  hashed. This was a one-way door (re-addressing cascades to every descendant), taken by a deliberate
+  burn-and-rebuild on operator sign-off, after the three questions were answered (repair: none/burn;
+  dedup: softens; threat: full Merkle-DAG). The full contract is preserved at
+  `_system/safekeeping/_enc-v2-contract.md`; the build spec at `_system/enc-v2-spec.md`.
 
 ---
 
 ## 7. Provenance
 
-Distilled from the `stream-cleanroom` proof (P0–P3: `enc:v1` pinned against 115 records,
-deterministic spine, render round-trip, sentinel daemon, reactive + Summon lanes). This
-deployable strips it to the spine, pools cards globally with threads as manifests (fork/clone/query
-as manifest ops) for multi-thread/team use, makes every path self-locating, and ships empty.
+Distilled from the `stream-cleanroom` proof (P0–P3: content-addressing pinned against 115 records,
+deterministic spine, render round-trip, sentinel daemon, reactive + Summon lanes). This deployable
+strips it to the spine, pools cards globally with threads as derive-manifests for multi-thread/team
+use, makes every path self-locating, and ships empty. It then took the one-way door the cleanroom
+held open — folding `reply_to` into the address (`enc:v2`, the Merkle-DAG) by a clean burn-and-
+rebuild, so the store proves a card *and its causal ancestry* as a unit.
 
 Grounding: log-as-source-of-truth, content-addressing, change-data-capture, idempotence
 (Kleppmann, *Designing Data-Intensive Applications*, ch. 11–12); the view-from-records split

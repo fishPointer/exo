@@ -1,6 +1,7 @@
 /* persona-cards.css — Futaba-esque persona post cards for the terminal-output stream.
    Shizu = pastel pink moe (Yotsuba-warm), Renka = cool Miku teal (#39C5BB, Yotsuba-B-cool).
-   Dark-native (Red Graphite): translucent persona-tinted backs + light body text stay readable.
+   Theme-INDEPENDENT: opaque persona-tinted panels + pinned light text, so cards render identically
+   under any Obsidian theme (no compositing over the theme's background or --text-normal).
    Card form ≈ imageboard post: tinted header bar with name + `No.<hash>` postno + timestamp,
    bordered post block, no callout icon. Authors: shizu / renka / fish / claude. */
 
@@ -80,11 +81,37 @@
 .callout[data-callout="fish"]  .callout-content em { color: #b7e36a; font-style: italic; }
 .callout[data-callout="claude"] .callout-content em { color: #c0b5ff; font-style: italic; }
 
+/* ---------- theme-INDEPENDENT body ----------
+   The fills above are now OPAQUE, so a light theme can't tint them. Pin the inherited text
+   too — body copy, code spans, and links — so a card looks identical on any theme (Obsidian's
+   --text-normal goes dark on a light theme, which would be unreadable on these dark panels). */
+.callout[data-callout="shizu"] .callout-content,
+.callout[data-callout="renka"] .callout-content,
+.callout[data-callout="fish"] .callout-content,
+.callout[data-callout="claude"] .callout-content,
+.callout[data-callout="claude-tui"] .callout-content,
+.callout[data-callout="claude-api"] .callout-content { color: #d8d8da; }
+.callout[data-callout="shizu"] .callout-content code,
+.callout[data-callout="renka"] .callout-content code,
+.callout[data-callout="fish"] .callout-content code,
+.callout[data-callout="claude"] .callout-content code,
+.callout[data-callout="claude-tui"] .callout-content code,
+.callout[data-callout="claude-api"] .callout-content code {
+  background-color: rgba(255, 255, 255, 0.09);
+  color: #e8e8ea;
+}
+.callout[data-callout="shizu"] .callout-content a,
+.callout[data-callout="renka"] .callout-content a,
+.callout[data-callout="fish"] .callout-content a,
+.callout[data-callout="claude"] .callout-content a,
+.callout[data-callout="claude-tui"] .callout-content a,
+.callout[data-callout="claude-api"] .callout-content a { color: #8ab4ff; }
+
 /* ---------- Shizu: pastel pink moe ---------- */
 .callout[data-callout="shizu"] {
   --callout-color: 255, 170, 205;
-  background-color: rgba(255, 150, 200, 0.06);
-  border: 1px solid rgba(255, 150, 200, 0.22);
+  background-color: #2c252a;
+  border: 1px solid #503845;
   border-left: 3px solid #ffaad0;
 }
 .callout[data-callout="shizu"] .callout-title {
@@ -99,8 +126,8 @@
 /* ---------- Renka: cool Miku teal ---------- */
 .callout[data-callout="renka"] {
   --callout-color: 57, 197, 187;
-  background-color: rgba(57, 197, 187, 0.12);
-  border: 1px solid rgba(57, 197, 187, 0.28);
+  background-color: #213233;
+  border: 1px solid #264d4b;
   border-left: 3px solid #39c5bb;
 }
 .callout[data-callout="renka"] .callout-title {
@@ -115,8 +142,8 @@
 /* ---------- fish (operator / Master) — Rayquaza: emerald body, gold accents ---------- */
 .callout[data-callout="fish"] {
   --callout-color: 46, 204, 113;
-  background-color: rgba(46, 204, 113, 0.09);
-  border: 1px solid rgba(255, 210, 74, 0.28);
+  background-color: #1f2e27;
+  border: 1px solid #5d502c;
   border-left: 3px solid #ffd24a;                         /* gold edge */
   box-shadow: inset 2px 0 0 0 rgba(46, 204, 113, 0.55);   /* emerald inner rail under the gold */
 }
@@ -135,8 +162,8 @@
 /* ---------- claude (no affect) ---------- */
 .callout[data-callout="claude"] {
   --callout-color: 155, 140, 255;
-  background-color: rgba(155, 140, 255, 0.05);
-  border: 1px solid rgba(155, 140, 255, 0.20);
+  background-color: #24242b;
+  border: 1px solid #37344d;
   border-left: 3px solid #9b8cff;
 }
 .callout[data-callout="claude"] .callout-title {
@@ -174,8 +201,8 @@
 /* claude-tui — violet (the interactive terminal voice; same family as claude) */
 .callout[data-callout="claude-tui"] {
   --callout-color: 155, 140, 255;
-  background-color: rgba(155, 140, 255, 0.05);
-  border: 1px solid rgba(155, 140, 255, 0.20);
+  background-color: #24242b;
+  border: 1px solid #37344d;
   border-left: 3px solid #9b8cff;
 }
 .callout[data-callout="claude-tui"] .callout-title {
@@ -189,8 +216,8 @@
 /* claude-api — soft dark red (the summoned / API voice) */
 .callout[data-callout="claude-api"] {
   --callout-color: 200, 90, 90;
-  background-color: rgba(170, 50, 50, 0.10);
-  border: 1px solid rgba(170, 50, 50, 0.30);
+  background-color: #2c2022;
+  border: 1px solid #482425;
   border-left: 3px solid #b34747;
 }
 .callout[data-callout="claude-api"] .callout-title {
@@ -200,3 +227,80 @@
 .callout[data-callout="claude-api"] .callout-title em { color: #d98a8a; font-style: italic; font-weight: 400; font-size: 0.95em; opacity: 0.92; }
 .callout[data-callout="claude-api"] .callout-content em { color: #e0a0a0; font-style: italic; }
 .callout[data-callout="claude-api"] .callout-title a:not([href*="#"]):not([data-href*="#"]) { color: #e79a9a !important; }
+
+/* nav — the structural "Jump to Bottom" header link. Not a persona; a compact, chromeless
+   inline link, right-aligned, so it reads as a thread control and not a message card. */
+.callout[data-callout="nav"] {
+  background: none;
+  border: none;
+  margin: 0 0 0.2em 0;
+  padding: 0;
+  font-size: 0.82em;
+}
+.callout[data-callout="nav"] .callout-icon { display: none; }
+.callout[data-callout="nav"] .callout-title {
+  padding: 0;
+  justify-content: flex-end;
+  font-family: var(--font-monospace);
+  opacity: 0.62;
+}
+.callout[data-callout="nav"] .callout-title a {
+  color: var(--text-muted) !important;
+  text-decoration: none;
+}
+.callout[data-callout="nav"] .callout-title a:hover { opacity: 1; text-decoration: underline; }
+
+/* ---------- latex — the formulary box (a render CLASS, not an author) ----------
+   Any card-author can wear it: a `/latex suite` entry authored as a nested `> [!latex]` callout
+   renders as a boxed, technical formulary panel INSIDE the speaking persona card — the persona
+   keeps the voice, the equation wears the box. Styled author-agnostically (it reads the same
+   whoever is speaking) and theme-independent (opaque ink + pinned light text). These rules sit
+   LAST in the file so, at equal specificity, they win over the host persona's .callout-content
+   colour for the nested box. Blueprint steel-cyan, distinct from every persona hue. */
+.callout[data-callout="latex"] {
+  --callout-color: 125, 180, 205;
+  background-color: #171c22;                 /* ink slate, opaque */
+  border: 1px solid #2c3a44;
+  border-left: 3px solid #7fb7cc;            /* blueprint accent */
+  border-radius: 5px;
+  margin: 0.8em 0;
+  mix-blend-mode: normal;
+}
+.callout[data-callout="latex"] .callout-icon { display: none; }
+.callout[data-callout="latex"] .callout-title {
+  font-family: var(--font-monospace);
+  font-size: 0.82em;
+  letter-spacing: 0.03em;
+  padding: 4px 9px;
+  border-radius: 4px 4px 0 0;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #cfe6ef;
+  background: linear-gradient(95deg, rgba(127,183,204,0.18) 0%, rgba(127,183,204,0.10) 100%);
+}
+.callout[data-callout="latex"] .callout-title::before { content: "ƒ "; opacity: 0.7; }
+
+/* pin the box's own body/code/em regardless of the host persona (source-order-last → wins) */
+.callout[data-callout="latex"] .callout-content { color: #d6dde2; }
+.callout[data-callout="latex"] .callout-content em { color: #9fc4d2; font-style: italic; }
+.callout[data-callout="latex"] .callout-content code {
+  background-color: rgba(127,183,204,0.12);
+  color: #cfe6ef;
+}
+
+/* the equation breathes; the terms table reads tight + technical */
+.callout[data-callout="latex"] .math-block,
+.callout[data-callout="latex"] mjx-container[display="true"] { margin: 0.4em 0 0.6em; }
+.callout[data-callout="latex"] table { font-size: 0.85em; border-collapse: collapse; margin: 0.3em 0; }
+.callout[data-callout="latex"] th {
+  font-family: var(--font-monospace);
+  font-weight: 700;
+  text-align: left;
+  color: #bcdce8;
+  border-bottom: 1px solid #3a4a54;
+  padding: 2px 8px;
+}
+.callout[data-callout="latex"] td {
+  border-bottom: 1px solid rgba(127,183,204,0.10);
+  padding: 2px 8px;
+}

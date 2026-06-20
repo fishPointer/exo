@@ -40,3 +40,15 @@ tight card geometry. Record cards with `--author renka` and they'll pick up the 
 
 Snippets are checked in, so a styling change ships to the whole team. Keep them additive and
 scoped to `.callout[data-callout="…"]` so they don't fight the user's chosen theme.
+
+## Non-author classes (`nav`, `latex`)
+
+Not every styled callout is a persona. Two **render classes** live in `persona-cards.css` and key off
+the same `data-callout` hook, but no card is ever *authored* as one:
+
+- **`nav`** — the chromeless "Jump to Bottom" thread control render emits at the top of each view.
+- **`latex`** — the **formulary box** a `/latex suite` entry wears. An entry is authored as a nested
+  `> [!latex]` callout inside a persona/claude card; the `latex` rules box it (blueprint-cyan ink panel,
+  monospace title, tight terms table) so the equation reads as a technical reference while the card stays
+  the speaker's. Author-agnostic by design (same look whoever speaks), and placed LAST in the file so it
+  wins the host persona's `.callout-content` colour for the nested box. See `.claude/skills/latex-suite/`.

@@ -203,7 +203,7 @@ def _do_summon(view_rel: str | None) -> tuple[bool, str]:
     subprocess.run([sys.executable, str(STREAM), "record", "--author", "claude-api",
                     "--reply-to", head.id, "--flair", "◈ *summon staged*", "--view", vrel],
                    input=ph_body, capture_output=True, text=True, cwd=str(ROOT))
-    ph_id = stream.card_id(ph_body)
+    ph_id = stream.card_id(ph_body, head.id)           # enc:v2: id commits to the parent it was recorded under
     fire_reload(vrel)
     t0 = time.monotonic()
     try:
@@ -229,8 +229,9 @@ def _do_summon(view_rel: str | None) -> tuple[bool, str]:
     ok = proc.returncode == 0 and bool(body)
     _log_api({"action": "summon", "ok": ok, "duration_s": dur,
               "exit": proc.returncode, "chars": len(body)})
-    # the staged placeholder is replaced by the outcome — the reply, or a failure note
-    (rdir / f"{ph_id}.md").unlink(missing_ok=True)
+    # the staged placeholder is replaced by the outcome — the reply, or a failure note.
+    # It lives in the global POOL (not rdir, which is just the thread name); drop it there.
+    stream._drop_pooled(rdir, stream.Card(id=ph_id, reply_to=head.id))
     if not ok:
         fail = (f"*(summon failed {datetime.now().strftime('%H:%M:%S')} after "
                 f"{int(dur)}s — exit {proc.returncode})*")
