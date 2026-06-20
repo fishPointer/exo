@@ -2,7 +2,8 @@
 
 A small, robust system for a team to hold **conversation threads** that everyone appends to,
 from any device, asynchronously, with no server. Cards are immutable and named by the hash of
-their content, so concurrent edits from different people merge instead of conflicting.
+their content **and their causal parent** — a Merkle-DAG — so concurrent posts from different
+people merge as a set union instead of conflicting.
 
 It's an [Obsidian](https://obsidian.md) vault + a stdlib-only Python backend + a Claude Code
 config, all in one repo. Pull it, do the one-time setup, and start posting.
@@ -16,15 +17,27 @@ config, all in one repo. Pull it, do the one-time setup, and start posting.
 ## The model in 60 seconds
 
 ```
-_system/data/cards/<id>.md       ← the truth. immutable cards in one global pool. id = hash(body).
-_system/data/threads/<name>.md   ← a thread = a manifest: which cards it includes, in what order.
+_system/data/cards/<id>.md       ← the truth. immutable cards in one global pool.
+                                    id = sha256("enc:v2\n" + sha256(normalize(body)) + "\n" + parent)
+_system/data/threads/<name>.md   ← a thread = a manifest {root, render}; its membership is DERIVED
+                                    as subtree(root) — the root + every reply-descendant, live.
 notes/<thread>.md                ← what you read & type in. a rendering of the manifest over the pool.
 ```
 
 You type into a **thread** note. You hit **Run**. Your text becomes immutable **cards**.
-Obsidian Sync carries the cards to everyone else's device. Because a card's name is its
-content hash, two people posting at once can never clobber each other — worst case you both
-made new cards, and they both appear.
+Obsidian Sync carries the cards to everyone else's device.
+
+A card's name is the hash of its body **plus its parent's id** (git's trick — a commit hashes its
+parent). Two consequences fall out:
+
+- **Concurrent posts can't clobber each other.** Worst case two people both minted new cards, and
+  both appear — a merge is a set union over the pool.
+- **The same body under a *different* parent is a *different* card.** Identity is content *in its
+  causal context*. A `reply_to` rewrite stops the card hashing to its filename, so `validate` catches
+  it — the edge is *in* the address, not a separate seal.
+
+A thread carries no id-list: it's just `{root, render}`, and its membership is resolved live as the
+reply-subtree of `root`. The view in `notes/` is derived from that — regenerable, never authoritative.
 
 That's it. The rest is detail.
 
@@ -43,8 +56,8 @@ cd exo
 
 **2. Open it in Obsidian.** *Open folder as vault* → pick the `exo` folder.
 - Enable the bundled plugin: Settings → Community plugins → turn off Restricted/Safe mode →
-  enable **Exo Ribbon**. (Five buttons appear in the left ribbon: Run, Scan, Validate,
-  Restore, Summon.)
+  enable **Exo Ribbon**. (Seven buttons appear in the left ribbon: Run, Annotate, Pull, Scan,
+  Validate, Restore, Summon.)
 - The card styling snippet (`persona-cards`) is enabled by default.
 
 **3. Turn on sync.** This is how content reaches other devices.
@@ -62,11 +75,17 @@ every safely-fixable problem and report the rest. The bare `doctor.py` is just t
 **`/initialize` is the agent's session wake-up** — it runs the repair pass, starts the daemon, then
 *orients*: reads the dashboard's reply-debt and recent work back and confirms where you left off.
 
-**5. (Optional) Start the daemon** so the Obsidian buttons do something:
+**5. (Optional) Start the daemon** so the Obsidian buttons do something. The recommended path is the
+**systemd user service** — it survives the TUI closing, restarts on failure, and (with linger) survives
+logout/reboot:
 ```bash
-python3 _system/watch.py              # leave running while you work; Ctrl-C to stop
+_system/daemon.sh status      # {status|restart|stop|logs}; setup in _system/config/daemon.md
 ```
-The daemon only ever acts on an explicit button click. It runs no loop of its own.
+Or run it in the foreground for a quick session (Ctrl-C to stop):
+```bash
+python3 _system/watch.py
+```
+Either way the daemon only ever acts on an explicit button click. It runs no loop of its own.
 
 **6. (Optional) AI replies — the Summon button.** Put your key outside the vault:
 ```bash
@@ -82,32 +101,37 @@ Details and key hygiene: [`_system/config/api-keys.md`](_system/config/api-keys.
 
 **From Obsidian (the normal way):**
 1. Open a thread (start with `notes/main.md`).
-2. Type your message **between cards** or below the `---` separator at the bottom.
+2. Type your message **between cards** (a draft beneath a card's `^caret` replies to *that* card) or
+   below the `---` separator at the bottom (the staging zone).
 3. Click **Run** (▶). Your text becomes a card; the thread re-renders.
 
-**The five buttons:**
+**The seven buttons:**
 
 | | button | does |
 |---|---|---|
-| ▶ | **Run** | reconcile *this* thread — your typed text → cards, edited card bodies restored, re-render |
-| 🧠 | **Scan** | flag every thread that has unsaved drift (writes `DASHBOARD.md`'s worklist) |
-| ⚛ | **Validate** | check every card still hashes to its name and reply links resolve |
-| 🧪 | **Restore** | rebuild *this* view from its records — discards unsaved edits, fixes a sync conflict |
+| ▶ | **Run** | reconcile *this* thread — typed text → cards (fan-out under a `^caret`, gel staged posts), edited card bodies restored, re-render |
+| ✎ | **Annotate** | harvest in-body `` `…` `` sigil notes from edited cards into fish reply cards quoting the excerpt (deterministic, no AI) |
+| ✂ | **Pull** | extract code-highlighted excerpts into ``` codeblocks below the `---` (idempotent) |
+| 🧠 | **Scan** | flag every thread that has drifted (writes `.stream/dirty.json` + the dashboard worklist) |
+| ⚛ | **Validate** | re-hash every card (`enc:v2`), check every reply link resolves, assert the graph is acyclic |
+| 🧪 | **Restore** | the hard wash — rebuild *this* view from the pool, discarding in-view card edits **and** the staging draft (diffs first, never silent) |
 | ⚡ | **Summon** | fire **one** AI reply (your click only; needs an API key) |
 
 **From the command line (works with no daemon, no Obsidian):**
 ```bash
-# post a card
+# post a card (content-addressed by body + reply_to)
 echo "hello team" | python3 _system/stream.py record --author fish --view notes/main.md
 
 # reconcile / inspect
 python3 _system/stream.py run      --view notes/main.md
 python3 _system/stream.py validate
-python3 _system/stream.py render   --view notes/main.md --write   # = Restore
+python3 _system/stream.py render   --view notes/main.md --write --hard   # = Restore
 ```
+The full verb set (`record`, `run`, `annotate`, `pull`, `gel`, `fork`, `validate`, `render`, `scan`,
+`bump`, `id`, `locate`) is documented in [`.claude/CLAUDE.md`](.claude/CLAUDE.md) and `ARCHITECTURE.md`.
 
 **A new thread:** create `notes/<name>.md` (flat in `notes/`, no subfolders) with this
-frontmatter, then post to it with `--view notes/<name>.md`:
+frontmatter, then post to it with `--view notes/<name>.md`; the first card bootstraps the manifest:
 ```yaml
 ---
 type: stream
@@ -116,18 +140,22 @@ title: <name>
 ---
 ```
 
+**Authoring standards** ship as Claude Code skills under `.claude/skills/` — `latex-suite` (the
+boxed `[!latex]` formulary format for equations), plus `bump`, `burn`, `initialize`, `stream`.
+
 ---
 
 ## How sync stays clean (the important part)
 
 - **Git** ships the *apparatus* (code, configs, plugin). You only `git pull` when the tooling
   changes.
-- **Obsidian Sync** ships the *content* (threads + records). This is the live, second-to-second
-  channel. The repo itself stays empty — content is `.gitignore`d.
-- **Conflicts can't lose data.** Cards are content-addressed, so concurrent posts merge as a
-  set union. A thread *view* can conflict (two people typed into `main.md` at once) — but the
-  view is derived, so just hit **Restore** and it rebuilds identically from the cards. You
-  never lose a card to a view conflict.
+- **Obsidian Sync** ships the *content* (cards + threads + views). This is the live, second-to-second
+  channel. The repo itself stays empty of content — it's `.gitignore`d (only the empty scaffold and
+  the seed `notes/main.md` are tracked).
+- **Conflicts can't lose data.** Cards are content-addressed, so concurrent posts merge as a set
+  union. A thread *view* can conflict (two people typed into `main.md` at once) — but the view is
+  derived, so just hit **Restore** and it rebuilds identically from the pool. You never lose a card
+  to a view conflict.
 
 Full reasoning: [`_system/ARCHITECTURE.md`](_system/ARCHITECTURE.md) §5.
 
@@ -136,9 +164,10 @@ Full reasoning: [`_system/ARCHITECTURE.md`](_system/ARCHITECTURE.md) §5.
 ## For the AI agent
 
 If you're an agent working here, read [`.claude/CLAUDE.md`](.claude/CLAUDE.md). The short
-version: **records are the truth; to post, pipe your reply through `stream.py record` once,
-and the echoed card IS your message** — never hand-edit a card body, never write a prose copy
-of what you just recorded.
+version: **the pool is the truth; to reply, pipe your message through `stream.py record` once and
+re-emit the echoed `enc:v2` frame as your reply** — never hand-edit a pooled card body, never write a
+prose copy of what you just recorded. Your prompts are captured automatically (the capture hook);
+your replies you mint yourself with `record`.
 
 ---
 
@@ -150,21 +179,22 @@ exo/
 ├── DASHBOARD.md           ← live status: daemon, dirty threads, reply debt (auto-generated)
 ├── .claude/               ← Claude Code config
 │   ├── CLAUDE.md          ←   agent operating contract
-│   ├── settings.json      ←   the capture hook
-│   └── skills/stream/     ←   the /stream skill (+ template for more)
+│   ├── settings.json      ←   the capture hook wiring
+│   └── skills/            ←   bump · burn · initialize · latex-suite · stream
 ├── .obsidian/             ← editor config, the exo-ribbon plugin, the card-styling snippet
 ├── _system/               ← THE APPARATUS
-│   ├── ARCHITECTURE.md    ←   the design, the contract, the failure modes
+│   ├── ARCHITECTURE.md    ←   the design, the enc:v2 contract, the failure modes
 │   ├── stream.py          ←   the deterministic core (the product)
-│   ├── watch.py           ←   the optional daemon (buttons → backend)
-│   ├── capture_prompt.py  ←   the optional Claude Code capture hook
-│   ├── doctor.py          ←   health check (verifies everything; the /initialize skill)
+│   ├── watch.py           ←   the daemon (buttons → backend); daemon.sh runs it as a service
+│   ├── daemon.sh          ←   manage the systemd user service (status|restart|stop|logs)
+│   ├── capture_prompt.py  ←   the Claude Code capture hook (cards operator prompts)
+│   ├── doctor.py          ←   health check + repair (the /initialize skill)
 │   ├── burn.py            ←   factory-reset the vault to empty (the /burn skill)
 │   ├── test_golden.py     ←   the tests that must never go red
-│   ├── records/           ←   CONTENT: the immutable card store, one subdir per thread
-│   └── config/            ←   how to manage settings, skills, API keys, CSS
+│   ├── data/              ←   CONTENT (gitignored): cards/ (global pool) + threads/ (manifests)
+│   └── config/            ←   how to manage settings, skills, API keys, CSS, the daemon
 └── notes/                 ← CONTENT (synced via Obsidian, not git)
-    └── main.md            ←   the seed thread (empty); more threads are notes/<name>.md
+    └── main.md            ←   the seed thread; more threads are notes/<name>.md
 ```
 
 ---
@@ -174,12 +204,13 @@ exo/
 - **First stop for anything:** `python3 _system/doctor.py --fix` (or `/initialize`). It repairs
   every safely-fixable fault (config wiring, a flipped safety flag, a drifted thread) and tells
   you exactly what's left and how to fix it.
-- **Buttons do nothing.** The daemon isn't running. `python3 _system/watch.py`.
+- **Buttons do nothing.** The daemon isn't running. `_system/daemon.sh status` (or `restart`); for a
+  one-off, `python3 _system/watch.py`.
 - **A card shows as a plain gray box.** The `persona-cards` CSS snippet is off, or the author
   has no colour — see [`_system/config/css.md`](_system/config/css.md).
-- **`validate` says INVALID.** A pooled card body was hand-edited. **Restore** the thread (it rebuilds
-  from the pool), or fix/remove the offending card file under `_system/data/cards/`.
-- **Thread looks wrong after a sync.** Hit **Restore** — it rebuilds the view from the merged
-  records.
+- **`validate` says INVALID.** A pooled card body was hand-edited (its content no longer hashes to
+  its filename). **Restore** the thread (it rebuilds from the pool), or fix/remove the offending card
+  file under `_system/data/cards/`.
+- **Thread looks wrong after a sync.** Hit **Restore** — it rebuilds the view from the merged pool.
 - **Summon fails.** No key (`~/.config/exo/.env`) or no `claude` CLI. Everything else still
   works without it.

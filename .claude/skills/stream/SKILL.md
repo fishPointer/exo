@@ -5,8 +5,9 @@ description: Drive the stream-cards thread store — post to a thread, reconcile
 
 # /stream
 
-Thin wrapper over `python3 _system/stream.py`. Records are the truth; threads are views.
-Full model: `_system/ARCHITECTURE.md`. Default thread: `notes/main.md`.
+Thin wrapper over `python3 _system/stream.py`. The card pool is the truth; threads are
+manifests; the notes are renderings. Full model: `_system/ARCHITECTURE.md`. Default thread:
+`notes/main.md`.
 
 ## Post a card (the only sanctioned way to write)
 
@@ -45,7 +46,8 @@ the restore (discarded), so an accidental typo-fix is never mistaken for a note.
 ```
 python3 _system/stream.py validate                          # hash + link integrity, all threads
 python3 _system/stream.py scan                              # flag drifted threads → .stream/dirty.json
-python3 _system/stream.py render --view notes/main.md --write   # rebuild view from records
+python3 _system/stream.py render --view notes/main.md --write          # re-render (carries the staging draft)
+python3 _system/stream.py render --view notes/main.md --write --hard   # = Restore: the wash, discard in-view edits
 python3 _system/stream.py dashboard --write                # refresh DASHBOARD.md
 ```
 
@@ -53,7 +55,9 @@ python3 _system/stream.py dashboard --write                # refresh DASHBOARD.m
 
 A thread is any note with `type: stream` frontmatter directly in `notes/` (flat — no
 subfolders). Create the file, then `record`/`run` against it with `--view notes/<name>.md`.
-Its records live under `_system/records/<name>/`.
+The first card bootstraps the thread MANIFEST at `_system/data/threads/<name>.md` (`{root, render}`);
+the cards themselves live in the global pool `_system/data/cards/<id>.md`, cited by every thread whose
+subtree contains them.
 
 ## This file is also the skill template
 

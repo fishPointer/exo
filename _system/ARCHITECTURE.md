@@ -301,7 +301,7 @@ make one person's button click fire on everyone's machine.
   hashed. This was a one-way door (re-addressing cascades to every descendant), taken by a deliberate
   burn-and-rebuild on operator sign-off, after the three questions were answered (repair: none/burn;
   dedup: softens; threat: full Merkle-DAG). The full contract is preserved at
-  `_system/safekeeping/_enc-v2-contract.md`; the build spec at `_system/enc-v2-spec.md`.
+  `_system/safekeeping/_enc-v2-contract.md` (the build spec + as-built notes alongside it).
 
 ---
 

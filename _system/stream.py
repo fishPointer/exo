@@ -1,38 +1,47 @@
 #!/usr/bin/env python3
 """
-stream.py — the deterministic core of the stream-cards backend (enc:v1).
+stream.py — the deterministic core of the stream-cards backend (enc:v2).
 
 Stdlib only. No external dependencies, no install step, no daemon required to
 use the CLI. Self-locating: works from wherever the vault is cloned.
 
-TWO REPRESENTATIONS (DDIA derived data, ch. 11-12)
-  _system/records/<thread>/<id>.md   SOURCE OF TRUTH — one immutable,
-                    content-addressed card, partitioned by thread.
-  notes/<thread>.md   the VIEW — a materialized projection that renders a
-                    thread's records as Futaba-style callout posts. Regenerable;
-                    never authoritative. Authoring happens *in* the view, so the
-                    "run button" reconciles the view back to the records.
+THREE REPRESENTATIONS (DDIA derived data, ch. 11-12)
+  _system/data/cards/<id>.md    SOURCE OF TRUTH — immutable, content-addressed
+                    cards in ONE global pool (no thread partition). A Merkle-DAG node.
+  _system/data/threads/<name>.md  a thread MANIFEST {root, render}; its membership is
+                    DERIVED as subtree(root) — resolved live from the pool, no id-list.
+  notes/<thread>.md   the VIEW — a materialized projection that renders a thread's
+                    cards as Futaba-style callout posts. Regenerable; never authoritative.
+                    Authoring happens *in* the view, so the "run button" reconciles it back.
 
-THE LOAD-BEARING CONTRACT  (enc:v1)
-  id = sha256(normalize(body))[:8]
-  normalize(body):  NFC the unicode -> rstrip each line -> join with "\n"
-                    -> strip outer newlines -> append exactly one "\n".
-  The id IS the checksum. Verified byte-exact against all records.
+THE LOAD-BEARING CONTRACT  (enc:v2 — the edge is IN the address)
+  id = sha256("enc:v2\n" + sha256(normalize(body)) + "\n" + (reply_to or "ROOT"))
+       a full 64-hex Merkle-DAG node name; the 8-char prefix is display only.
+  normalize(body):  NFC the unicode -> punctuation-stable fold (curly quotes, NB
+                    hyphens) -> rstrip each line -> join with "\n" -> strip outer
+                    newlines -> append exactly one "\n".
+  The id commits to the PARENT (git's move): same body + same parent -> ONE card;
+  same body + different parent -> a DIFFERENT card. A reply_to rewrite stops the card
+  hashing to its filename, so validate catches it — no separate edge digest.
 
 THE DIRTY FLAG
-  A thread that has drifted from its records (operator edits) is flagged in its
+  A thread that has drifted from the pool (operator edits) is flagged in its
   FRONTMATTER (`stream: dirty` + `stream_pending: N`) — never in card bodies, so
   hashes are untouched. Clean = keys absent (a clean view stays byte-exact).
   The full change-set is written to a per-note sidecar `.stream/changesets/<slug>.json`.
 
 COMMANDS  (deterministic; the generative half is the LLM agent, not this file)
-  id        read a body on stdin -> print its enc:v1 id
-  validate  re-hash every record + referential integrity on reply_to
-  render    regenerate one view from records (clears its dirty flag) [--check|--write]
-  diff      one view -> change-set; writes sidecar + sets flag  [--quiet = preview only]
-  extract   restore mutated interiors + persist self-consistent new cards
-  run       THE RUN BUTTON, one thread: check -> scrub -> render -> clear flag
+  record    stdin body -> mint a pooled card + re-render + echo the enc:v2 frame
+  run       THE RUN BUTTON, one thread: fold typed text -> cards, restore, re-render
+  annotate  harvest in-body `…`-sigil notes into fish reply cards quoting the excerpt
+  pull      extract code-highlighted excerpts into ``` codeblocks below the ---
+  fork      new thread = the reply-subtree rooted at a card (a {root, render} manifest)
+  validate  re-hash every card (body, reply_to) + referential integrity + acyclicity
+  render    regenerate one view from the pool (--write [--hard] = Restore, the wash)
   scan      vault-wide dirty pass: flag every thread + write .stream/dirty.json
+  bump      reconcile dirty threads + print the reply-debt queue (the heartbeat)
+  id|locate print a body's id / resolve an excerpt -> source card id(s)
+  (also internal/button-driven: diff, extract, render-tui, fold, capture, dashboard)
 
 See ARCHITECTURE.md for the DDIA / Git / Datomic grounding.
 """
