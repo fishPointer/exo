@@ -56,8 +56,8 @@ cd exo
 
 **2. Open it in Obsidian.** *Open folder as vault* → pick the `exo` folder.
 - Enable the bundled plugin: Settings → Community plugins → turn off Restricted/Safe mode →
-  enable **Exo Ribbon**. (Seven buttons appear in the left ribbon: Run, Annotate, Pull, Scan,
-  Validate, Restore, Summon.)
+  enable **Exo Ribbon**. (Eight buttons appear in the left ribbon: New thread, Run, Annotate,
+  Pull, Scan, Validate, Restore, Summon.)
 - The card styling snippet (`persona-cards`) is enabled by default.
 
 **3. Turn on sync.** This is how content reaches other devices.
@@ -105,10 +105,11 @@ Details and key hygiene: [`_system/config/api-keys.md`](_system/config/api-keys.
    below the `---` separator at the bottom (the staging zone).
 3. Click **Run** (▶). Your text becomes a card; the thread re-renders.
 
-**The seven buttons:**
+**The eight buttons:**
 
 | | button | does |
 |---|---|---|
+| 📄 | **New thread** | prompt for a name, scaffold `notes/<slug>.md` as a fresh `type: stream` thread, and open it (local — no daemon; the manifest bootstraps on the first card) |
 | ▶ | **Run** | reconcile *this* thread — typed text → cards (fan-out under a `^caret`, gel staged posts), edited card bodies restored, re-render |
 | ✎ | **Annotate** | harvest in-body `` `…` `` sigil notes from edited cards into fish reply cards quoting the excerpt (deterministic, no AI) |
 | ✂ | **Pull** | extract code-highlighted excerpts into ``` codeblocks below the `---` (idempotent) |

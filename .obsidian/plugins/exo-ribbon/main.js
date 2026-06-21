@@ -9,7 +9,8 @@
 // `.stream/trigger.json` via the Vault API and the running `watch.py` daemon
 // picks it up. No child_process, no ports; cross-platform and decoupled.
 //
-// The five operational primitives the stream-cards workflow invites:
+// The primitives the stream-cards workflow invites:
+//   📄 file+  New thread  create a fresh `type: stream` thread note + open it (LOCAL, no daemon)
 //   ▶ play   Run       reconcile THIS thread: check -> fold -> restore -> render
 //   🧠 brain  Scan      vault-wide dirty pass: flag every thread + write dirty.json
 //   ⚛ atom   Validate  content-address integrity (every card hashes to its id)
@@ -26,8 +27,10 @@ const TRIGGER_PATH = '.stream/trigger.json';
 
 // label, lucide icon, command id, and how it acts.
 //  kind 'backend' => writes a sentinel with `action` for watch.py
+//  kind 'local'   => handled in-plugin, no daemon (create+open a new thread note)
 //  kind 'spacer'  => inert divider
 const PRIMITIVES = [
+  { id: 'newthread', label: 'New thread', icon: 'file-plus',    kind: 'local',   action: 'newthread' },
   { id: 'run',      label: 'Run',       icon: 'play',          kind: 'backend', action: 'run' },
   { id: 'annotate', label: 'Annotate',  icon: 'pencil',        kind: 'backend', action: 'annotate' },
   { id: 'pull',     label: 'Pull',      icon: 'scissors',      kind: 'backend', action: 'pull' },
@@ -37,6 +40,34 @@ const PRIMITIVES = [
   { id: 'reset',    label: 'Restore',   icon: 'flask-conical', kind: 'backend', action: 'reset' },
   { id: 'summon',   label: 'Summon',    icon: 'zap',           kind: 'backend', action: 'summon' },
 ];
+
+// Tiny prompt modal for the New-thread button: one text field, Enter or Create to
+// submit, Esc to cancel. Pre-filled with a timestamp default so a single Enter spins
+// up a thread (daily-note-style), or type a name over it.
+class NewThreadModal extends obsidian.Modal {
+  constructor(app, def, onSubmit) {
+    super(app);
+    this.def = def;
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h3', { text: 'New stream thread' });
+    const input = contentEl.createEl('input', { type: 'text' });
+    input.value = this.def;
+    input.placeholder = 'thread name';
+    input.style.width = '100%';
+    const submit = () => { const v = input.value; this.close(); this.onSubmit(v); };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    });
+    const row = contentEl.createDiv({ cls: 'modal-button-container' });
+    const create = row.createEl('button', { text: 'Create', cls: 'mod-cta' });
+    create.addEventListener('click', submit);
+    window.setTimeout(() => { input.focus(); input.select(); }, 0);
+  }
+  onClose() { this.contentEl.empty(); }
+}
 
 module.exports = class ExoRibbon extends obsidian.Plugin {
   async onload() {
@@ -51,11 +82,15 @@ module.exports = class ExoRibbon extends obsidian.Plugin {
       }
 
       // Commands-first: register the logic as a command (palette + hotkey-
-      // assignable + callable by id)...
+      // assignable + callable by id)... backend kinds drop a sentinel; local
+      // kinds run in-plugin.
+      const invoke = p.kind === 'local'
+        ? () => this.local(p.action, p.label)
+        : () => this.trigger(p.action, p.label);
       this.addCommand({
         id: p.id,
         name: `Stream: ${p.label.toLowerCase()}`,
-        callback: () => this.trigger(p.action, p.label),
+        callback: invoke,
       });
 
       // ...and make the ribbon icon a thin trigger for it.
@@ -116,10 +151,61 @@ module.exports = class ExoRibbon extends obsidian.Plugin {
     }
   }
 
+  // Local (no-daemon) actions, dispatched from kind:'local' buttons.
+  local(action, label) {
+    if (action === 'newthread') return this.newThread();
+    new obsidian.Notice(`stream: unknown local action — ${action}`);
+  }
+
+  // New-thread button: prompt for a name, scaffold notes/<slug>.md as a fresh
+  // `type: stream` thread, and open it. A thread is just a note with that
+  // frontmatter — its MANIFEST bootstraps on the first card — so this needs no
+  // backend round-trip (unlike the sentinel buttons). Like the daily-note button,
+  // but for a new stream thread beside main. Opening an existing slug just focuses it.
+  async newThread() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const def = `thread-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    new NewThreadModal(this.app, def, async (raw) => {
+      const name = (raw || '').trim() || def;
+      const slug = this.threadSlug(name) || this.threadSlug(def);
+      const path = obsidian.normalizePath(`notes/${slug}.md`);
+      let tf = this.app.vault.getFileByPath(path);
+      if (tf) {
+        new obsidian.Notice(`stream: notes/${slug}.md exists — opening it`);
+      } else {
+        try {
+          await this.app.vault.adapter.mkdir(obsidian.normalizePath('notes')).catch(() => {});
+          tf = await this.app.vault.create(path, this.threadScaffold(name));
+          new obsidian.Notice(`stream: new thread → notes/${slug}.md`);
+        } catch (e) {
+          new obsidian.Notice(`stream: new thread failed — ${e.message}`);
+          return;
+        }
+      }
+      await this.app.workspace.getLeaf(false).openFile(tf);
+    }).open();
+  }
+
+  // flat, filesystem-safe slug (threads live flat in notes/, no subfolders)
+  threadSlug(name) {
+    return String(name).trim().toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
+  }
+
+  // the empty-thread seed: `type: stream` frontmatter + a trailing `---` staging
+  // separator, so you can type below it and hit Run. Title is quoted (arbitrary input).
+  threadScaffold(title) {
+    const safe = String(title).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `---\ntype: stream\nstatus: live\ntitle: "${safe}"\n---\n\n\n---\n`;
+  }
+
   reorderRibbon(anchor) {
     const container = anchor && anchor.parentElement;
     if (!container) return;
-    const order = ['Run', 'Scan', 'Validate', 'Restore', 'Summon', '__spacer__'];
+    const order = ['New thread', 'Run', 'Scan', 'Validate', 'Restore', 'Summon', '__spacer__'];
     const wanted = [];
     for (const key of order) {
       const el = key === '__spacer__'
